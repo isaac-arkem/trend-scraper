@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" /><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Community Mapper</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.23.9/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --g:#C9A84C;--gl:#E8C96A;--gd:#9A7A38;
+  --bk:#0A0A0A;--s1:#111111;--s2:#1A1A1A;--s3:#222222;
+  --br:#2A2A2A;--tx:#F0F0F0;--mu:#888888;--di:#555555;
+  --gr:#4CAF50;--re:#EF5350;--am:#FFA726;--bl:#64B5F6;
+}
+html,body{height:100%;background:var(--bk);color:var(--tx);font-family:'Inter',sans-serif;font-size:14px}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:#111}
+::-webkit-scrollbar-thumb{background:#2A2A2A;border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--g)}
+a{color:inherit;text-decoration:none}
+img{display:block}
+button{cursor:pointer;border:none;background:none;color:inherit;font-family:inherit}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── constants ────────────────────────────────────────────────────────────────
+const G='#C9A84C',GL='#E8C96A',GD='#9A7A38',
+      BK='#0A0A0A',S1='#111111',S2='#1A1A1A',S3='#222222',
+      BR='#2A2A2A',TX='#F0F0F0',MU='#888888',DI='#555555',
+      GR='#4CAF50',RE='#EF5350',AM='#FFA726',BL='#64B5F6';
+
+const STAGES={1:'Discovery',2:'Enrichment',3:'Expand',4:'Harvest',5:'AI Analysis',6:'Aggregate'};
+const SKIN_BG={porcelain:'#F9EDE3',fair:'#F5D5BB',light:'#E8B89A',medium:'#C8855A',
+               olive:'#A0694A','golden-tan':'#8B5E3C',tan:'#7A4F30',caramel:'#5C3319',
+               deep:'#3B1F10',dark:'#1C0D05'};
+
+const IMG = (url) => url ? `/img?u=${encodeURIComponent(url)}` : '';
+
+// ── API ──────────────────────────────────────────────────────────────────────
+const api = {
+  markets: () => fetch('/api/markets').then(r=>r.json()),
+  data: (m,p) => fetch(`/api/data?market=${m}&platform=${p}`).then(r=>r.json()),
+};
+
+// ── tiny components ──────────────────────────────────────────────────────────
+function Tag({label, color, bg}) {
+  color = color || G;
+  const hex = color.replace('#','');
+  const rgb = [hex.slice(0,2),hex.slice(2,4),hex.slice(4,6)].map(x=>parseInt(x||'88',16));
+  return <span style={{
+    fontSize:10,fontWeight:600,padding:'2px 8px',borderRadius:3,display:'inline-block',
+    margin:'2px',letterSpacing:'.3px',
+    background: bg || `rgba(${rgb},0.13)`,
+    color,border:`1px solid rgba(${rgb},0.3)`
+  }}>{label}</span>;
+}
+
+function Metric({label,value,color=G}) {
+  return <div style={{display:'flex',flexDirection:'column',alignItems:'center',
+    padding:'10px 16px',background:S2,borderRadius:4,border:`1px solid ${BR}`,minWidth:90}}>
+    <span style={{fontFamily:'Space Grotesk',fontSize:22,fontWeight:700,color,lineHeight:1}}>{value}</span>
+    <span style={{fontSize:9,fontWeight:700,letterSpacing:'1.5px',color:DI,textTransform:'uppercase',marginTop:3}}>{label}</span>
+  </div>;
+}
+
+function StagePill({n, status}) {
+  const st = status || 'pending';
+  const col={done:GR,failed:RE,running:AM,pending:DI}[st]||DI;
+  const bg={done:'rgba(76,175,80,.12)',failed:'rgba(239,83,80,.12)',running:'rgba(255,167,38,.12)',pending:S2}[st]||S2;
+  const icon={done:'✓',failed:'✕',running:'⟳',pending:'·'}[st]||'·';
+  return <div style={{background:bg,border:`1px solid ${col}44`,borderRadius:4,
+    padding:'9px 16px',textAlign:'center',minWidth:110}}>
+    <div style={{fontSize:11,fontWeight:600,color:col}}>{icon} {STAGES[n]}</div>
+    <div style={{fontSize:8,letterSpacing:'1.5px',color:DI,textTransform:'uppercase',marginTop:2}}>{st}</div>
+  </div>;
+}
+
+function AnalysisTags({a}) {
+  if(!a) return null;
+  const tags=[];
+  if(a.skin_tone&&a.skin_tone!=='unclear') tags.push(<Tag key="sk" label={a.skin_tone} color={SKIN_BG[a.skin_tone]||G} bg={(SKIN_BG[a.skin_tone]||G)+"22"}/>);
+  if(a.body_frame&&a.body_frame!=='unclear') tags.push(<Tag key="bf" label={a.body_frame} color={BL}/>);
+  if(a.makeup_style&&a.makeup_style!=='unclear') tags.push(<Tag key="mk" label={a.makeup_style.replace('_',' ')} color="#CE93D8"/>);
+  if(a.hair_color&&a.hair_color!=='unclear') tags.push(<Tag key="hc" label={a.hair_color} color={AM}/>);
+  (a.fashion_style||[]).slice(0,2).forEach((v,i)=>tags.push(<Tag key={"f"+i} label={v} color={G}/>));
+  (a.content_style||[]).slice(0,1).forEach((v,i)=>tags.push(<Tag key={"c"+i} label={v} color={GR}/>));
+  return <div style={{display:'flex',flexWrap:'wrap',gap:0}}>{tags}</div>;
+}
+
+function PhotoCell({url, analysis, height=160}) {
+  const [err,setErr]=useState(false);
+  return <div style={{position:'relative',borderRadius:4,overflow:'hidden',background:S2,
+    border:`1px solid ${BR}`,flex:'1 1 150px',minWidth:130}}>
+    {!err && url ? <img src={IMG(url)}
+      onError={()=>setErr(true)}
+      style={{width:'100%',height,objectFit:'cover',display:'block',transition:'transform .3s'}}
+      onMouseOver={e=>e.currentTarget.style.transform='scale(1.04)'}
+      onMouseOut={e=>e.currentTarget.style.transform='scale(1)'}
+    /> : <div style={{width:'100%',height,background:S3,display:'flex',alignItems:'center',
+      justifyContent:'center',color:DI,fontSize:11}}>no image</div>}
+    {analysis && <div style={{padding:'6px 4px 4px'}}>
+      <AnalysisTags a={analysis}/>
+    </div>}
+  </div>;
+}
+
+// ── bar chart ─────────────────────────────────────────────────────────────────
+function BarChart({title, items, colors}) {
+  const ref = useRef(null);
+  const chartRef = useRef(null);
+  useEffect(()=>{
+    if(!ref.current||!items||!items.length) return;
+    if(chartRef.current) chartRef.current.destroy();
+    const labels = items.map(i=>i[0]);
+    const vals   = items.map(i=>i[1]);
+    const clrs   = colors || [G,GL,GD,BL,'#CE93D8',AM,GR,'#F48FB1','#80CBC4','#FFCC02'];
+    chartRef.current = new Chart(ref.current,{
+      type:'bar',
+      data:{
+        labels,
+        datasets:[{data:vals,backgroundColor:clrs.slice(0,labels.length),
+          borderWidth:0,borderRadius:3}]
+      },
+      options:{
+        indexAxis:'y',responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{display:false},tooltip:{
+          callbacks:{label:(c)=>` ${c.parsed.x} creators`},
+          backgroundColor:S3,titleColor:MU,bodyColor:TX,borderColor:BR,borderWidth:1,
+        }},
+        scales:{
+          x:{display:false,grid:{display:false}},
+          y:{grid:{display:false},border:{display:false},
+            ticks:{color:TX,font:{size:11,family:'Inter'},padding:4}},
+        },
+      }
+    });
+    return ()=>{ if(chartRef.current){chartRef.current.destroy();chartRef.current=null;} };
+  },[items]);
+  return <div style={{background:S1,border:`1px solid ${BR}`,borderRadius:6,padding:16,flex:'1 1 220px',minWidth:220}}>
+    <div style={{fontSize:10,fontWeight:700,letterSpacing:'2px',color:G,textTransform:'uppercase',marginBottom:12}}>{title}</div>
+    {items && items.length ? <div style={{height:Math.max(140,items.length*34)}}><canvas ref={ref}/></div>
+      : <div style={{color:DI,fontSize:12,paddingTop:20,textAlign:'center'}}>no data yet</div>}
+  </div>;
+}
+
+// ── OVERVIEW ─────────────────────────────────────────────────────────────────
+function Overview({data}) {
+  const {creators=[],runs=[],posts=[]} = data;
+  const last = runs[0] || null;
+  const statuses = (last && last.stage_statuses) || {};
+  return <div>
+    <Section title="PIPELINE STATUS"/>
+    <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:40}}>
+      {[1,2,3,4,5,6].map(n=><StagePill key={n} n={n} status={statuses[String(n)]}/>)}
+    </div>
+
+    <div style={{display:'flex',gap:24,flexWrap:'wrap'}}>
+      <div style={{flex:'1 1 400px'}}>
+        <Section title="TOP CREATORS"/>
+        <div style={{background:S1,border:`1px solid ${BR}`,borderRadius:6,overflow:'hidden'}}>
+          {creators.slice(0,12).map((c,i)=>(
+            <div key={c.id} style={{display:'flex',alignItems:'center',gap:16,padding:'12px 20px',
+              borderBottom:`1px solid ${BR}`,background:i%2?S2:S1}}>
+              <span style={{fontFamily:'Space Grotesk',fontSize:18,fontWeight:700,
+                color:i<3?G:MU,minWidth:36}}>#{i+1}</span>
+              <div style={{flex:1}}>
+                <a href={"https://instagram.com/" + c.username} target="_blank"
+                  style={{fontSize:14,fontWeight:600,color:TX}}>{"@"+c.username}</a>
+                <div style={{fontSize:11,color:MU,marginTop:1}}>{(c.followers||0).toLocaleString()} followers</div>
+              </div>
+              <div style={{textAlign:'right'}}>
+                <div style={{fontFamily:'Space Grotesk',fontSize:18,fontWeight:700,color:G}}>{(c.total_score||0).toFixed(3)}</div>
+                <div style={{fontSize:9,color:DI,letterSpacing:'1px'}}>SCORE</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{flex:'1 1 400px'}}>
+        <Section title="RECENT POSTS"/>
+        <div style={{background:S1,border:`1px solid ${BR}`,borderRadius:6,overflow:'hidden'}}>
+          {posts.slice(0,10).map((p,i)=>{
+            const thumb = p.thumbnail_url||p.media_url;
+            return <div key={p.id||i} style={{display:'flex',gap:12,padding:'12px 16px',
+              borderBottom:`1px solid ${BR}`,alignItems:'flex-start',background:i%2?S2:S1}}>
+              <div style={{width:56,height:56,borderRadius:4,overflow:'hidden',
+                background:S3,flexShrink:0,border:`1px solid ${BR}`}}>
+                {thumb && <img src={IMG(thumb)} onError={e=>e.currentTarget.style.display='none'}
+                  style={{width:'100%',height:'100%',objectFit:'cover'}}/>}
+              </div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:11,color:MU,lineHeight:1.5,marginBottom:6,
+                  overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                  {(p.caption||'').slice(0,90)||'—'}
+                </div>
+                <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+                  {p.likes>0 && <Tag label={"❤ "+p.likes.toLocaleString()}/>}
+                  {p.views>0 && <Tag label={"▶ "+p.views.toLocaleString()} color={BL}/>}
+                  {p.comments_count>0 && <Tag label={"💬 "+p.comments_count.toLocaleString()} color={MU}/>}
+                </div>
+              </div>
+            </div>;
+          })}
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+
+// ── CREATORS ─────────────────────────────────────────────────────────────────
+function Creators({data}) {
+  const {creators=[],posts=[],media=[]} = data;
+  const postsByC = {}, mediaByC = {};
+  posts.forEach(p=>{ if(!postsByC[p.creator_id]) postsByC[p.creator_id]=[]; postsByC[p.creator_id].push(p); });
+  media.forEach(m=>{ if(!mediaByC[m.creator_id]) mediaByC[m.creator_id]=[]; mediaByC[m.creator_id].push(m); });
+
+  const top = creators.slice(0,60);
+  const cols=[0,1,2].map(()=>[]);
+  top.forEach((c,i)=>cols[i%3].push(c));
+
+  return <div>
+    <div style={{color:MU,fontSize:12,marginBottom:20}}>{creators.length} creators · showing top 60 by score</div>
+    <div style={{display:'flex',gap:12,alignItems:'flex-start'}}>
+      {cols.map((col,ci)=>(
+        <div key={ci} style={{flex:1,minWidth:0}}>
+          {col.map(c=>{
+            const cm=mediaByC[c.id]||[]; const cp=postsByC[c.id]||[];
+            const likes=cp.reduce((s,p)=>s+(p.likes||0),0);
+            return <CreatorCard key={c.id} c={c} media={cm} totalLikes={likes}/>;
+          })}
+        </div>
+      ))}
+    </div>
+  </div>;
+}
+
+function CreatorCard({c,media,totalLikes}) {
+  return <div style={{background:S1,border:`1px solid ${BR}`,borderRadius:6,marginBottom:14,
+    borderLeft:`3px solid ${G}`,overflow:'hidden',
+    transition:'box-shadow .2s'}}
+    onMouseOver={e=>e.currentTarget.style.boxShadow='0 4px 24px rgba(201,168,76,.1)'}
+    onMouseOut={e=>e.currentTarget.style.boxShadow='none'}>
+
+    {/* header */}
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',
+      padding:'14px 16px 10px',borderBottom:`1px solid ${BR}`}}>
+      <div>
+        <a href={"https://instagram.com/" + c.username} target="_blank"
+          style={{fontFamily:'Space Grotesk',fontSize:15,fontWeight:700,color:TX}}>{"@"+c.username}</a>
+        <div style={{fontSize:11,color:MU,marginTop:2}}>{(c.followers||0).toLocaleString()} followers</div>
+      </div>
+      <div style={{textAlign:'right'}}>
+        <div style={{fontFamily:'Space Grotesk',fontSize:20,fontWeight:700,color:G,lineHeight:1}}>{(c.total_score||0).toFixed(3)}</div>
+        <div style={{fontSize:9,color:DI,letterSpacing:'1px'}}>SCORE</div>
+      </div>
+    </div>
+
+    {/* meta row */}
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+      padding:'7px 16px',borderBottom:`1px solid ${BR}`}}>
+      <div style={{display:'flex',flexWrap:'wrap',gap:0}}>
+        <Tag label={(c.source_type||'?').replace(/_/g,' ')} color={MU}/>
+        {c.language_detected && <Tag label={c.language_detected} color={BL}/>}
+      </div>
+      <div style={{display:'flex',gap:0}}>
+        {totalLikes>0 && <Tag label={"❤ "+totalLikes.toLocaleString()} color={GL}/>}
+        {c.engagement_score>0 && <Tag label={(c.engagement_score*100).toFixed(1)+"% eng"} color={GR}/>}
+      </div>
+    </div>
+
+    {/* image grid */}
+    <div style={{display:'flex',flexWrap:'wrap',gap:5,padding:'10px 14px 12px'}}>
+      {media.length===0
+        ? <div style={{color:DI,fontSize:11,padding:'16px 0',textAlign:'center',width:'100%'}}>No images scraped</div>
+        : media.slice(0,6).map((m,i)=><PhotoCell key={i} url={m.original_url} analysis={m.analysis} height={150}/>)
+      }
+    </div>
+  </div>;
+}
+
+// ── AI ANALYSIS ──────────────────────────────────────────────────────────────
+function AIAnalysis({data}) {
+  const {analysis=[],media=[]} = data;
+  if(!analysis.length) return <div style={{marginTop:60,textAlign:'center'}}>
+    <div style={{color:MU,fontSize:14,marginBottom:8}}>No AI analysis results yet.</div>
+    <div style={{color:DI,fontSize:12,marginBottom:12}}>Run stage 5 to analyze images with GPT-4o Vision:</div>
+    <code style={{background:S2,color:G,padding:'8px 16px',borderRadius:4,fontSize:12}}>
+      uv run python main.py --market UAE --platform instagram --from-stage 5
+    </code>
+  </div>;
+
+  const cnt=(f)=>{
+    const m={};
+    analysis.forEach(a=>{const v=a[f];if(v&&v!=='unclear')m[v]=(m[v]||0)+1;});
+    return Object.entries(m).sort((a,b)=>b[1]-a[1]);
+  };
+  const arrCnt=(f)=>{
+    const m={};
+    analysis.forEach(a=>(a[f]||[]).forEach(v=>m[v]=(m[v]||0)+1));
+    return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  };
+
+  const skinColors = cnt('skin_tone').map(([k])=>SKIN_BG[k]||G);
+  const mediaById  = Object.fromEntries(media.map(m=>[m.id,m]));
+
+  return <div>
+    <div style={{color:MU,fontSize:12,marginBottom:20}}>
+      {analysis.length} images analyzed · person detected
+    </div>
+
+    <Section title="APPEARANCE DISTRIBUTIONS"/>
+    <div style={{display:'flex',flexWrap:'wrap',gap:12,marginBottom:12}}>
+      <BarChart title="SKIN TONE"    items={cnt('skin_tone')}   colors={skinColors}/>
+      <BarChart title="BODY FRAME"   items={cnt('body_frame')}/>
+      <BarChart title="MAKEUP STYLE" items={cnt('makeup_style')} colors={['#CE93D8','#D8A0DC','#BA68C8','#9C27B0','#AB47BC','#7B1FA2']}/>
+    </div>
+    <div style={{display:'flex',flexWrap:'wrap',gap:12,marginBottom:40}}>
+      <BarChart title="HAIR COLOR"   items={cnt('hair_color')}  colors={[AM,'#7B3F00',GL,'#FF6B35','#9C27B0',MU,'#F5F5F5','#4A4A4A']}/>
+      <BarChart title="HAIR LENGTH"  items={cnt('hair_length')}/>
+      <BarChart title="HAIR TEXTURE" items={cnt('hair_texture')}/>
+      <BarChart title="FASHION"      items={arrCnt('fashion_style')}/>
+      <BarChart title="CONTENT"      items={arrCnt('content_style')} colors={[GR,'#81C784','#A5D6A7','#66BB6A','#43A047','#2E7D32']}/>
+    </div>
+
+    <Section title="IMAGE GALLERY WITH AI DESCRIPTORS"/>
+    <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
+      {analysis.slice(0,48).map((a,i)=>{
+        const m = mediaById[a.media_asset_id];
+        const url = (m && m.original_url)||'';
+        const conf = a.confidence||0;
+        return <div key={i} style={{flex:'1 1 calc(12.5% - 8px)',minWidth:155,maxWidth:200,
+          background:S2,border:`1px solid ${BR}`,borderRadius:6,overflow:'hidden',padding:6}}>
+          <GalleryImg url={url}/>
+          <div style={{paddingTop:6}}>
+            <div style={{fontSize:9,color:conf>.8?GR:AM,letterSpacing:'1px',marginBottom:3}}>
+              {Math.round(conf*100)}% CONF
+            </div>
+            <AnalysisTags a={a}/>
+          </div>
+        </div>;
+      })}
+    </div>
+  </div>;
+}
+
+function GalleryImg({url}) {
+  const [err,setErr]=useState(false);
+  return err||!url
+    ? <div style={{width:'100%',height:180,background:S3,borderRadius:4,display:'flex',
+        alignItems:'center',justifyContent:'center',color:DI,fontSize:10}}>no image</div>
+    : <img src={IMG(url)} onError={()=>setErr(true)}
+        style={{width:'100%',height:180,objectFit:'cover',borderRadius:4,display:'block'}}/>;
+}
+
+// ── PIPELINE ─────────────────────────────────────────────────────────────────
+function Pipeline({data}) {
+  const {runs=[]} = data;
+  if(!runs.length) return <div style={{color:DI,fontSize:14,marginTop:40,textAlign:'center'}}>
+    No runs yet. Run the pipeline to see history.
+  </div>;
+  return <div>
+    <Section title="PIPELINE RUN HISTORY"/>
+    {runs.map((r,i)=>{
+      const st=r.status||'?';
+      const sc = ({done:GR,failed:RE,running:AM}[st]) || MU;
+      const statuses = r.stage_statuses || {};
+      const started=(r.started_at||'').slice(0,16).replace('T','  ');
+      const ended=r.ended_at?(r.ended_at||'').slice(0,16).replace('T','  '):'—';
+      return <div key={r.id||i} style={{background:S1,border:`1px solid ${BR}`,borderRadius:6,
+        marginBottom:12,borderLeft:`3px solid ${sc}`,overflow:'hidden'}}>
+        <div style={{padding:'14px 20px',borderBottom:`1px solid ${BR}`}}>
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:4}}>
+            <span style={{fontFamily:'Space Grotesk',fontSize:12,fontWeight:700,color:sc,letterSpacing:'1px'}}>{st.toUpperCase()}</span>
+            <span style={{fontSize:11,color:MU}}>{started}</span>
+            <span style={{color:DI,margin:'0 4px'}}>→</span>
+            <span style={{fontSize:11,color:MU}}>{ended}</span>
+          </div>
+          <div style={{fontSize:11,color:DI}}>{r.total_creators||0} creators · {r.total_posts||0} posts · {r.total_media||0} media</div>
+        </div>
+        <div style={{display:'flex',gap:6,padding:'12px 20px',flexWrap:'wrap'}}>
+          {[1,2,3,4,5,6].map(n=><StagePill key={n} n={n} status={statuses[String(n)]}/>)}
+        </div>
+        {r.error_message && <div style={{fontSize:11,color:RE,padding:'8px 20px',borderTop:`1px solid ${BR}`}}>
+          ⚠ {r.error_message.slice(0,200)}
+        </div>}
+      </div>;
+    })}
+  </div>;
+}
+
+// ── section header ────────────────────────────────────────────────────────────
+function Section({title}) {
+  return <div style={{fontSize:10,fontWeight:700,letterSpacing:'3px',color:G,
+    textTransform:'uppercase',marginBottom:18,marginTop:32,paddingBottom:10,
+    borderBottom:`1px solid rgba(201,168,76,.2)`}}>{title}</div>;
+}
+
+// ── main app ─────────────────────────────────────────────────────────────────
+function App() {
+  const [markets, setMarkets]   = useState([]);
+  const [market,  setMarket]    = useState('UAE');
+  const [platform,setPlatform]  = useState('instagram');
+  const [tab,     setTab]       = useState('overview');
+  const [data,    setData]      = useState({});
+  const [loading, setLoading]   = useState(false);
+
+  useEffect(()=>{ api.markets().then(setMarkets).catch(console.error); },[]);
+
+  useEffect(()=>{
+    if(!market) return;
+    setLoading(true);
+    setData({});
+    api.data(market,platform)
+      .then(setData)
+      .catch(console.error)
+      .finally(()=>setLoading(false));
+  },[market,platform]);
+
+  const c=data.creators||[],p=data.posts||[],m=data.media||[],a=data.analysis||[],r=data.runs||[];
+  const lastRun = r.length > 0 ? r[0] : null;
+  const lastStatus = lastRun ? lastRun.status : null;
+  const sc = {done:GR,failed:RE,running:AM}[lastStatus] || MU;
+
+  const TABS=[
+    {id:'overview',  label:'Overview'},
+    {id:'creators',  label:'Creators & Images'},
+    {id:'analysis',  label:'AI Analysis'},
+    {id:'pipeline',  label:'Pipeline'},
+  ];
+
+  return <div style={{minHeight:'100vh',background:BK}}>
+    {/* header */}
+    <div style={{background:`linear-gradient(135deg,${BK} 0%,#161208 60%,${BK} 100%)`,
+      borderBottom:`1px solid ${GD}`,padding:'24px 48px',
+      display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+      <div>
+        <div style={{fontSize:9,fontWeight:700,letterSpacing:'4px',color:G,marginBottom:4}}>COMMUNITY MAPPER</div>
+        <div style={{fontFamily:'Space Grotesk',fontSize:26,fontWeight:700,color:TX}}>Intelligence Dashboard</div>
+      </div>
+      <div style={{display:'flex',gap:24,alignItems:'center'}}>
+        {[
+          [c.length,'CREATORS',G],[p.length,'POSTS',GL],
+          [m.length,'MEDIA',AM],[a.length,'ANALYZED',GR]
+        ].map(([n,l,col])=>(
+          <div key={l} style={{textAlign:'right'}}>
+            <div style={{fontFamily:'Space Grotesk',fontSize:28,fontWeight:700,color:col,lineHeight:1}}>{n.toLocaleString()}</div>
+            <div style={{fontSize:9,fontWeight:700,letterSpacing:'2px',color:DI,textTransform:'uppercase',marginTop:2}}>{l}</div>
+          </div>
+        ))}
+        {lastStatus && <div style={{marginLeft:16,paddingLeft:16,borderLeft:`1px solid ${BR}`}}>
+          <div style={{fontSize:9,color:DI,letterSpacing:'2px'}}>LAST RUN</div>
+          <div style={{fontFamily:'Space Grotesk',fontSize:13,fontWeight:700,color:sc}}>{lastStatus.toUpperCase()}</div>
+        </div>}
+      </div>
+    </div>
+
+    {/* controls */}
+    <div style={{background:S1,borderBottom:`1px solid ${BR}`,padding:'14px 48px',display:'flex',alignItems:'flex-end',gap:16}}>
+      <div>
+        <div style={{fontSize:9,fontWeight:700,letterSpacing:'2px',color:DI,marginBottom:5}}>MARKET</div>
+        <select value={market||''} onChange={e=>setMarket(e.target.value)}
+          style={{background:S2,color:TX,border:`1px solid ${BR}`,borderRadius:4,padding:'8px 12px',
+            fontSize:13,minWidth:200,fontFamily:'Inter',outline:'none'}}>
+          <option value="">Select market…</option>
+          {markets.map(m=><option key={m.value} value={m.value}>{m.label}</option>)}
+        </select>
+      </div>
+      <div>
+        <div style={{fontSize:9,fontWeight:700,letterSpacing:'2px',color:DI,marginBottom:5}}>PLATFORM</div>
+        <select value={platform} onChange={e=>setPlatform(e.target.value)}
+          style={{background:S2,color:TX,border:`1px solid ${BR}`,borderRadius:4,padding:'8px 12px',
+            fontSize:13,minWidth:150,fontFamily:'Inter',outline:'none'}}>
+          <option value="instagram">Instagram</option>
+          <option value="tiktok">TikTok</option>
+        </select>
+      </div>
+      <button onClick={()=>{
+          setLoading(true);setData({});
+          api.data(market,platform).then(setData).finally(()=>setLoading(false));
+        }}
+        style={{background:S3,color:G,border:`1px solid ${G}`,borderRadius:4,
+          padding:'8px 20px',fontSize:12,fontWeight:600,letterSpacing:'1px',marginBottom:0}}>
+        ↻ REFRESH
+      </button>
+    </div>
+
+    {/* tabs */}
+    <div style={{background:S1,borderBottom:`2px solid ${G}`,padding:'0 48px',display:'flex',gap:0}}>
+      {TABS.map(t=>(
+        <button key={t.id} onClick={()=>setTab(t.id)}
+          style={{padding:'12px 28px',fontSize:11,fontWeight:700,letterSpacing:'.8px',
+            textTransform:'uppercase',color:tab===t.id?BK:MU,
+            background:tab===t.id?G:'transparent',
+            border:'none',borderRadius:`4px 4px 0 0`,transition:'all .15s',cursor:'pointer'}}>
+          {t.label}
+        </button>
+      ))}
+    </div>
+
+    {/* content */}
+    <div style={{padding:'36px 48px'}}>
+      {loading && <div style={{color:MU,fontSize:13,marginBottom:24,display:'flex',alignItems:'center',gap:8}}>
+        <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span> Loading data…
+      </div>}
+      {!market && <div style={{color:DI,fontSize:14,marginTop:80,textAlign:'center'}}>← Select a market to begin</div>}
+      {market && !loading && data.market && <>
+        {tab==='overview'  && <Overview  data={data}/>}
+        {tab==='creators'  && <Creators  data={data}/>}
+        {tab==='analysis'  && <AIAnalysis data={data}/>}
+        {tab==='pipeline'  && <Pipeline  data={data}/>}
+      </>}
+    </div>
+
+    <style>{`
+      @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+      select option{background:#1A1A1A;color:#F0F0F0}
+      select:focus{border-color:var(--g)!important}
+    `}</style>
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

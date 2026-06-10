@@ -46,14 +46,23 @@ def run(market_id: str, platform: str, max_assets: int = 500) -> list[dict]:
         result = None
 
         if asset_type == "video":
-            # Extract frames from video URL, analyze first good frame
             frames = download_video_and_extract(original_url, max_frames=6)
             for frame_bytes in frames:
                 result = analyze_image_bytes(frame_bytes)
                 if result and result.get("person_visible"):
                     break
         else:
-            result = analyze_image_url(original_url)
+            # Download bytes first — Instagram CDN URLs expire and can't be
+            # passed directly to OpenAI. Sending as base64 always works.
+            try:
+                import httpx
+                r = httpx.get(original_url, follow_redirects=True, timeout=20,
+                              headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"})
+                r.raise_for_status()
+                result = analyze_image_bytes(r.content)
+            except Exception as e:
+                log.warning(f"Failed to download image for analysis: {e}")
+                result = None
 
         if not result:
             update("media_assets", {"id": asset_id}, {"analysis_status": "failed"})

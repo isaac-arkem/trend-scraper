@@ -5,7 +5,7 @@ log = get_logger(__name__)
 
 HASHTAG_ACTOR = "apify/instagram-hashtag-scraper"
 PROFILE_ACTOR = "apify/instagram-profile-scraper"
-POST_ACTOR = "apify/instagram-post-scraper"
+POST_ACTOR = "apify/instagram-scraper"
 COMMENTS_ACTOR = "apify/instagram-comment-scraper"
 
 
@@ -32,11 +32,14 @@ def scrape_profiles(usernames: list[str]) -> list[dict]:
 def scrape_posts(usernames: list[str], posts_per_user: int = 5) -> list[dict]:
     if not usernames:
         return []
-    # Actor expects directUrls (profile URLs) and resultsType=posts
     profile_urls = [f"https://www.instagram.com/{u.strip('/')}/" for u in usernames]
     items = run_actor(
         POST_ACTOR,
-        {"directUrls": profile_urls, "resultsType": "posts", "resultsLimit": posts_per_user},
+        {
+            "directUrls": profile_urls,
+            "resultsType": "posts",
+            "resultsLimit": posts_per_user,
+        },
         label="IG:posts",
     )
     return [_normalise_post(i) for i in items if i.get("ownerUsername") or i.get("shortCode")]
