@@ -1,0 +1,129 @@
+markets:
+  UAE:
+    name: "UAE"
+    region: "META"
+    country_code: "AE"
+    apify_region_code: "AE"
+    languages: ["ar", "en"]
+    seed_profiles:
+      instagram:
+        - "anja_realestatedubai"
+        - "diana_hadid"
+        - "rebeccarkassab"
+      tiktok: []
+    hashtags:
+      instagram:
+        - "MyDubai"
+        - "dubailife"
+        - "softglam"
+        - "dubaibeautyblogger"
+        - "dubaifashionblogger"
+        - "dubaigirls"
+        - "dubainight"
+        - "Lebanon"
+      tiktok:
+        - "MyDubai"
+        - "dubailife"
+        - "dubaigirls"
+        - "softglam"
+    limits:
+      posts_per_hashtag: 100
+      max_creators: 10000
+      posts_per_creator: 20
+      max_expansion_profiles: 10000
+
+  SA:
+    name: "Saudi Arabia"
+    region: "META"
+    country_code: "SA"
+    apify_region_code: "SA"
+    languages: ["ar"]
+    seed_profiles:
+      instagram: []
+      tiktok: []
+    hashtags:
+      instagram:
+        - "كوشات"
+        - "موضه"
+        - "عنايه"
+      tiktok:
+        - "كوشات"
+        - "موضه"
+        - "عنايه"
+    limits:
+      posts_per_hashtag: 100
+      max_creators: 10000
+      posts_per_creator: 20
+      max_expansion_profiles: 10000
+
+  TR:
+    name: "Turkey"
+    region: "META"
+    country_code: "TR"
+    apify_region_code: "TR"
+    languages: ["tr"]
+    seed_profiles:
+      instagram: []
+      tiktok: []
+    hashtags:
+      instagram:
+        - "keşfet"
+        - "türkiye"
+        - "moda"
+      tiktok:
+        - "keşfet"
+        - "türkiye"
+    limits:
+      posts_per_hashtag: 100
+      max_creators: 10000
+      posts_per_creator: 20
+      max_expansion_profiles: 10000
+
+  BR:
+    name: "Brazil"
+    region: "LATAM"
+    country_code: "BR"
+    apify_region_code: "BR"
+    languages: ["pt"]
+    seed_profiles:
+      instagram:
+        - "juju.brazil"
+        - "vivibeltranrussi"
+      tiktok: []
+    hashtags:
+      instagram:
+        - "pravoce"
+        - "brasil"
+        - "moda"
+      tiktok:
+        - "brasil"
+        - "pravoce"
+    limits:
+      posts_per_hashtag: 100
+      max_creators: 10000
+      posts_per_creator: 20
+      max_expansion_profiles: 10000
+
+  ID:
+    name: "Indonesia"
+    region: "INDOPAC"
+    country_code: "ID"
+    apify_region_code: "ID"
+    languages: ["id"]
+    seed_profiles:
+      instagram:
+        - "asialongkon"
+        - "c4.mini"
+      tiktok: []
+    hashtags:
+      instagram:
+        - "indonesia"
+        - "fashionindo"
+      tiktok:
+        - "indonesia"
+        - "fashionindo"
+    limits:
+      posts_per_hashtag: 100
+      max_creators: 10000
+      posts_per_creator: 20
+      max_expansion_profiles: 10000
