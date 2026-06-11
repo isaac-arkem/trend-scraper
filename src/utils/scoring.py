@@ -11,7 +11,7 @@ def engagement_rate(avg_likes: float, followers: int) -> float:
     return min(avg_likes / followers, 1.0)
 
 
-def follower_score(followers: int, min_f: int = 10_000, max_f: int = 2_000_000) -> float:
+def follower_score(followers: int, min_f: int = 10_000, max_f: int = 4_000_000) -> float:
     if not followers or followers < min_f:
         return 0.0
     if followers > max_f:
@@ -47,5 +47,5 @@ def creator_score(
     }
 
 
-def meets_follower_filter(followers: int, min_f: int = 10_000, max_f: int = 2_000_000) -> bool:
+def meets_follower_filter(followers: int, min_f: int = 10_000, max_f: int = 4_000_000) -> bool:
     return followers is not None and min_f <= followers <= max_f

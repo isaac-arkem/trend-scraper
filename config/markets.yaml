@@ -31,6 +31,7 @@ markets:
       max_creators: 10000
       posts_per_creator: 20
       max_expansion_profiles: 10000
+      max_followers: 4000000
 
   SA:
     name: "Saudi Arabia"
@@ -55,6 +56,7 @@ markets:
       max_creators: 10000
       posts_per_creator: 20
       max_expansion_profiles: 10000
+      max_followers: 4000000
 
   TR:
     name: "Turkey"
@@ -78,6 +80,7 @@ markets:
       max_creators: 10000
       posts_per_creator: 20
       max_expansion_profiles: 10000
+      max_followers: 4000000
 
   BR:
     name: "Brazil"
@@ -103,6 +106,7 @@ markets:
       max_creators: 10000
       posts_per_creator: 20
       max_expansion_profiles: 10000
+      max_followers: 4000000
 
   ID:
     name: "Indonesia"
@@ -127,3 +131,4 @@ markets:
       max_creators: 10000
       posts_per_creator: 20
       max_expansion_profiles: 10000
+      max_followers: 4000000
