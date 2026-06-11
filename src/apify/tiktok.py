@@ -86,19 +86,22 @@ def _normalise_post(i: dict) -> dict:
 
 
 def _normalise_profile(i: dict) -> dict:
-    user = _get_nested(i, "userInfo", "user") or {}
+    # clockworks/tiktok-profile-scraper returns data under authorMeta
+    author = i.get("authorMeta", {})
+    # fallback for other actor formats that use userInfo.user/stats
+    user  = _get_nested(i, "userInfo", "user") or {}
     stats = _get_nested(i, "userInfo", "stats") or {}
     return {
         "platform": "tiktok",
-        "platform_user_id": str(user.get("id", "")),
-        "username": (user.get("uniqueId") or "").lower().strip(),
-        "full_name": user.get("nickname"),
-        "bio": user.get("signature"),
-        "followers": stats.get("followerCount"),
-        "following": stats.get("followingCount"),
-        "post_count": stats.get("videoCount"),
-        "profile_pic_url": user.get("avatarLarger"),
-        "is_verified": bool(user.get("verified")),
+        "platform_user_id": str(author.get("id") or user.get("id") or ""),
+        "username": (author.get("name") or user.get("uniqueId") or "").lower().strip(),
+        "full_name": author.get("nickName") or user.get("nickname"),
+        "bio": author.get("signature") or user.get("signature"),
+        "followers": author.get("fans") or stats.get("followerCount"),
+        "following": author.get("following") or stats.get("followingCount"),
+        "post_count": author.get("video") or stats.get("videoCount"),
+        "profile_pic_url": author.get("avatar") or user.get("avatarLarger"),
+        "is_verified": bool(author.get("verified") or user.get("verified")),
     }
 
 

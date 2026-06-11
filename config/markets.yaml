@@ -1,4 +1,7 @@
 markets:
+
+  # ── MENA ────────────────────────────────────────────────────────────────────
+
   UAE:
     name: "UAE"
     region: "META"
@@ -10,7 +13,15 @@ markets:
         - "anja_realestatedubai"
         - "diana_hadid"
         - "rebeccarkassab"
-      tiktok: []
+        - "rawan.eleyan"
+        - "zaqshahh"
+        - "kamilyaofficiel"
+        - "_littlemiracle_"
+        - "michelle_laza"
+      tiktok:
+        - "aya_mohamed_4564"
+        - "its.priscy"
+        - "diana_eneje"
     hashtags:
       instagram:
         - "MyDubai"
@@ -40,17 +51,85 @@ markets:
     apify_region_code: "SA"
     languages: ["ar"]
     seed_profiles:
-      instagram: []
-      tiktok: []
+      instagram:
+        - "ilsudemircii"
+        - "sereenzeen999"
+        - "fly_with_rissa"
+        - "bunny_oum"
+      tiktok:
+        - "aya_mohamed_4564"
+        - "its.priscy"
     hashtags:
       instagram:
         - "كوشات"
         - "موضه"
         - "عنايه"
+        - "softglam"
+        - "makeuparabic"
       tiktok:
         - "كوشات"
         - "موضه"
         - "عنايه"
+    limits:
+      posts_per_hashtag: 100
+      max_creators: 10000
+      posts_per_creator: 20
+      max_expansion_profiles: 10000
+      max_followers: 4000000
+
+  KW:
+    name: "Kuwait"
+    region: "META"
+    country_code: "KW"
+    apify_region_code: "KW"
+    languages: ["ar"]
+    seed_profiles:
+      instagram: []
+      tiktok: []
+    hashtags:
+      instagram:
+        - "كويت"
+        - "كويتيات"
+        - "softglam"
+      tiktok:
+        - "كويت"
+        - "كويتيات"
+    limits:
+      posts_per_hashtag: 100
+      max_creators: 10000
+      posts_per_creator: 20
+      max_expansion_profiles: 10000
+      max_followers: 4000000
+
+  EG:
+    name: "Egypt"
+    region: "META"
+    country_code: "EG"
+    apify_region_code: "EG"
+    languages: ["ar"]
+    seed_profiles:
+      instagram:
+        - "noha"
+        - "esra_l1"
+      tiktok:
+        - "aya_mohamed_4564"
+    hashtags:
+      instagram:
+        - "softglam"
+        - "skincareegypt"
+        - "makeupartist_egypt"
+        - "fashionegypt"
+        - "cairofashion"
+        - "hijabfashion"
+        - "cairolifestyle"
+        - "lifestyleblogger"
+        - "dailyvlog"
+        - "pyramids"
+        - "ootd"
+      tiktok:
+        - "softglam"
+        - "fashionegypt"
+        - "makeupartist_egypt"
     limits:
       posts_per_hashtag: 100
       max_creators: 10000
@@ -65,22 +144,120 @@ markets:
     apify_region_code: "TR"
     languages: ["tr"]
     seed_profiles:
-      instagram: []
+      instagram:
+        - "ilsudemircii"
       tiktok: []
     hashtags:
       instagram:
         - "keşfet"
         - "türkiye"
-        - "moda"
+        - "yaşam"
+        - "makyaj"
+        - "güzellik"
+        - "bakım"
+        - "ciltbakımı"
+        - "makeup"
+        - "beauty"
+        - "softglam"
       tiktok:
         - "keşfet"
         - "türkiye"
+        - "makyaj"
+        - "softglam"
     limits:
       posts_per_hashtag: 100
       max_creators: 10000
       posts_per_creator: 20
       max_expansion_profiles: 10000
       max_followers: 4000000
+
+  NG:
+    name: "Nigeria"
+    region: "META"
+    country_code: "NG"
+    apify_region_code: "NG"
+    languages: ["en"]
+    seed_profiles:
+      instagram:
+        - "diana_eneje"
+      tiktok:
+        - "diana_eneje"
+    hashtags:
+      instagram:
+        - "blackgirlmagic"
+        - "naijamakeupartist"
+        - "wiginstall"
+        - "asoke"
+        - "softglam"
+        - "cleanbeauty"
+        - "melaninpoppin"
+        - "brownskinbeauty"
+      tiktok:
+        - "blackgirlmagic"
+        - "naijamakeupartist"
+        - "melaninpoppin"
+    limits:
+      posts_per_hashtag: 100
+      max_creators: 10000
+      posts_per_creator: 20
+      max_expansion_profiles: 10000
+      max_followers: 4000000
+
+  ZA:
+    name: "South Africa"
+    region: "META"
+    country_code: "ZA"
+    apify_region_code: "ZA"
+    languages: ["en"]
+    seed_profiles:
+      instagram: []
+      tiktok: []
+    hashtags:
+      instagram:
+        - "mzansitiktok"
+        - "southafricantiktok"
+        - "girltalkza"
+        - "sandton"
+        - "amaitgirl"
+        - "jhbnightlife"
+      tiktok:
+        - "mzansitiktok"
+        - "southafricantiktok"
+        - "girltalkza"
+    limits:
+      posts_per_hashtag: 100
+      max_creators: 10000
+      posts_per_creator: 20
+      max_expansion_profiles: 10000
+      max_followers: 4000000
+
+  MA:
+    name: "Morocco"
+    region: "META"
+    country_code: "MA"
+    apify_region_code: "MA"
+    languages: ["ar", "fr"]
+    seed_profiles:
+      instagram:
+        - "kamilyaofficiel"
+      tiktok: []
+    hashtags:
+      instagram:
+        - "marocaine"
+        - "caftanduluxe"
+        - "tenuedujour"
+        - "تنسيقات"
+      tiktok:
+        - "marocaine"
+        - "caftanduluxe"
+    limits:
+      posts_per_hashtag: 100
+      max_creators: 10000
+      posts_per_creator: 20
+      max_expansion_profiles: 10000
+      max_followers: 4000000
+
+  # ── LATAM ───────────────────────────────────────────────────────────────────
 
   BR:
     name: "Brazil"
@@ -91,16 +268,132 @@ markets:
     seed_profiles:
       instagram:
         - "juju.brazil"
+        - "gabilopescom"
         - "vivibeltranrussi"
-      tiktok: []
+      tiktok:
+        - "domelipa"
+        - "vivibeltranrussi"
     hashtags:
       instagram:
         - "pravoce"
         - "brasil"
-        - "moda"
+        - "marquinha"
+        - "looknoturno"
+        - "projetobumbum"
+        - "gata"
       tiktok:
         - "brasil"
-        - "pravoce"
+        - "marquinha"
+        - "projetobumbum"
+    limits:
+      posts_per_hashtag: 100
+      max_creators: 10000
+      posts_per_creator: 20
+      max_expansion_profiles: 10000
+      max_followers: 4000000
+
+  MX:
+    name: "Mexico"
+    region: "LATAM"
+    country_code: "MX"
+    apify_region_code: "MX"
+    languages: ["es"]
+    seed_profiles:
+      instagram:
+        - "issavegas"
+      tiktok:
+        - "domelipa"
+    hashtags:
+      instagram:
+        - "mexicanbaddie"
+        - "trajedebaño"
+        - "buchona"
+        - "softglam"
+      tiktok:
+        - "mexicanbaddie"
+        - "buchona"
+    limits:
+      posts_per_hashtag: 100
+      max_creators: 10000
+      posts_per_creator: 20
+      max_expansion_profiles: 10000
+      max_followers: 4000000
+
+  CO:
+    name: "Colombia"
+    region: "LATAM"
+    country_code: "CO"
+    apify_region_code: "CO"
+    languages: ["es"]
+    seed_profiles:
+      instagram:
+        - "vivibeltranrussi"
+      tiktok:
+        - "vivibeltranrussi"
+    hashtags:
+      instagram:
+        - "colombianbeauties"
+        - "itgirlar"
+        - "softglam"
+      tiktok:
+        - "colombianbeauties"
+    limits:
+      posts_per_hashtag: 100
+      max_creators: 10000
+      posts_per_creator: 20
+      max_expansion_profiles: 10000
+      max_followers: 4000000
+
+  AR:
+    name: "Argentina"
+    region: "LATAM"
+    country_code: "AR"
+    apify_region_code: "AR"
+    languages: ["es"]
+    seed_profiles:
+      instagram:
+        - "vivibeltranrussi"
+      tiktok:
+        - "vivibeltranrussi"
+    hashtags:
+      instagram:
+        - "itgirlar"
+        - "argentina"
+        - "softglam"
+      tiktok:
+        - "itgirlar"
+        - "argentina"
+    limits:
+      posts_per_hashtag: 100
+      max_creators: 10000
+      posts_per_creator: 20
+      max_expansion_profiles: 10000
+      max_followers: 4000000
+
+  # ── INDOPAC ─────────────────────────────────────────────────────────────────
+
+  IN:
+    name: "India"
+    region: "INDOPAC"
+    country_code: "IN"
+    apify_region_code: "IN"
+    languages: ["hi", "en"]
+    seed_profiles:
+      instagram:
+        - "gatitayan777"
+      tiktok:
+        - "urf7i"
+    hashtags:
+      instagram:
+        - "desibaddie"
+        - "itgirlindia"
+        - "reelsviral"
+        - "glamlook"
+        - "bollywoodfashion"
+      tiktok:
+        - "desibaddie"
+        - "itgirlindia"
+        - "bollywoodfashion"
     limits:
       posts_per_hashtag: 100
       max_creators: 10000
@@ -118,14 +411,148 @@ markets:
       instagram:
         - "asialongkon"
         - "c4.mini"
+      tiktok:
+        - "asiaalk"
+    hashtags:
+      instagram:
+        - "ootdindonesia"
+        - "bajucewek"
+        - "beauty"
+        - "indonesia"
+      tiktok:
+        - "ootdindonesia"
+        - "bajucewek"
+        - "beauty"
+    limits:
+      posts_per_hashtag: 100
+      max_creators: 10000
+      posts_per_creator: 20
+      max_expansion_profiles: 10000
+      max_followers: 4000000
+
+  PH:
+    name: "Philippines"
+    region: "INDOPAC"
+    country_code: "PH"
+    apify_region_code: "PH"
+    languages: ["en", "tl"]
+    seed_profiles:
+      instagram: []
       tiktok: []
     hashtags:
       instagram:
-        - "indonesia"
-        - "fashionindo"
+        - "tiktokph"
+        - "pinaybaddie"
+        - "beachlifeph"
       tiktok:
-        - "indonesia"
-        - "fashionindo"
+        - "tiktokph"
+        - "pinaybaddie"
+    limits:
+      posts_per_hashtag: 100
+      max_creators: 10000
+      posts_per_creator: 20
+      max_expansion_profiles: 10000
+      max_followers: 4000000
+
+  TH:
+    name: "Thailand"
+    region: "INDOPAC"
+    country_code: "TH"
+    apify_region_code: "TH"
+    languages: ["th"]
+    seed_profiles:
+      instagram: []
+      tiktok: []
+    hashtags:
+      instagram:
+        - "thaitiktok"
+        - "softglam"
+      tiktok:
+        - "thaitiktok"
+        - "บิกินี่"
+        - "แฟชั่นแซ่บๆ"
+    limits:
+      posts_per_hashtag: 100
+      max_creators: 10000
+      posts_per_creator: 20
+      max_expansion_profiles: 10000
+      max_followers: 4000000
+
+  MY:
+    name: "Malaysia"
+    region: "INDOPAC"
+    country_code: "MY"
+    apify_region_code: "MY"
+    languages: ["ms", "en"]
+    seed_profiles:
+      instagram: []
+      tiktok: []
+    hashtags:
+      instagram:
+        - "malaysiatiktok"
+        - "bajubest"
+        - "ootdmalaysia"
+        - "baddiekl"
+        - "pantaivibes"
+      tiktok:
+        - "malaysiatiktok"
+        - "bajubest"
+        - "ootdmalaysia"
+    limits:
+      posts_per_hashtag: 100
+      max_creators: 10000
+      posts_per_creator: 20
+      max_expansion_profiles: 10000
+      max_followers: 4000000
+
+  JP:
+    name: "Japan"
+    region: "INDOPAC"
+    country_code: "JP"
+    apify_region_code: "JP"
+    languages: ["ja"]
+    seed_profiles:
+      instagram:
+        - "asuka_kijima"
+        - "wanna._b"
+      tiktok: []
+    hashtags:
+      instagram:
+        - "水着"
+        - "グラビア"
+        - "強めギャル"
+        - "美ボディ"
+        - "ナイトプール"
+      tiktok:
+        - "水着"
+        - "グラビア"
+        - "強めギャル"
+    limits:
+      posts_per_hashtag: 100
+      max_creators: 10000
+      posts_per_creator: 20
+      max_expansion_profiles: 10000
+      max_followers: 4000000
+
+  KR:
+    name: "South Korea"
+    region: "INDOPAC"
+    country_code: "KR"
+    apify_region_code: "KR"
+    languages: ["ko"]
+    seed_profiles:
+      instagram: []
+      tiktok: []
+    hashtags:
+      instagram:
+        - "바디프로필"
+        - "비키니그램"
+        - "인싸템"
+        - "몸매스타그램"
+      tiktok:
+        - "바디프로필"
+        - "비키니그램"
+        - "인싸템"
     limits:
       posts_per_hashtag: 100
       max_creators: 10000
