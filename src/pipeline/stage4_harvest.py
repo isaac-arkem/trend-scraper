@@ -84,7 +84,11 @@ def run(
             "posted_at": post.get("posted_at"),
         }
 
-        result = upsert("posts", post_row, on_conflict="platform,platform_post_id")
+        try:
+            result = upsert("posts", post_row, on_conflict="platform,platform_post_id")
+        except Exception as e:
+            log.debug(f"Skipping post for {username} — creator removed: {e}")
+            continue
         if not result:
             continue
 
@@ -93,48 +97,74 @@ def run(
         post_db_id = saved_post["id"]
 
         # Download and store media
-        media_url = post.get("media_url") or post.get("thumbnail_url")
-        if not media_url:
-            continue
-
         media_type = post.get("media_type", "image")
-        ext = "mp4" if media_type == "video" else "jpg"
-        filename = f"original.{ext}"
-        minio_path = build_path(platform, country_iso, platform_user_id, post_id, filename)
+        thumbnail_url = post.get("thumbnail_url")
+        video_url = post.get("video_url")
+        all_images = post.get("all_images") or []
 
-        stored_path = upload_from_url(media_url, minio_path)
-        if stored_path:
-            asset_type = "video" if media_type == "video" else "image"
-            asset_row = {
-                "post_id": post_db_id,
-                "creator_id": creator_id,
-                "asset_type": asset_type,
-                "minio_path": stored_path,
-                "original_url": media_url,
-                "analysis_status": "pending",
-            }
-            assets = insert("media_assets", asset_row)
-            if assets:
-                saved_assets.extend(assets)
+        assets_to_save = []  # list of (url, filename, asset_type)
 
-        # Also save thumbnail separately if video
-        if media_type == "video" and post.get("thumbnail_url"):
-            thumb_path = build_path(platform, country_iso, platform_user_id, post_id, "thumbnail.jpg")
-            stored_thumb = upload_from_url(post["thumbnail_url"], thumb_path)
-            if stored_thumb:
-                thumb_row = {
+        if platform == "tiktok":
+            # TikTok: use cover image only (video URLs are webpage links)
+            if thumbnail_url:
+                assets_to_save.append((thumbnail_url, "cover.jpg", "image"))
+
+        elif media_type == "carousel":
+            # Instagram carousel: save every image
+            for idx, img_url in enumerate(all_images[:20]):
+                assets_to_save.append((img_url, f"image_{idx+1:02d}.jpg", "image"))
+
+        elif media_type == "video":
+            # Instagram video/reel: save thumbnail + video file
+            if thumbnail_url:
+                assets_to_save.append((thumbnail_url, "cover.jpg", "image"))
+            if video_url:
+                assets_to_save.append((video_url, "video.mp4", "video"))
+
+        else:
+            # Instagram image
+            img_url = post.get("media_url") or thumbnail_url
+            if img_url:
+                assets_to_save.append((img_url, "image.jpg", "image"))
+
+        for url, filename, asset_type in assets_to_save:
+            if not url:
+                continue
+            minio_path = build_path(platform, country_iso, platform_user_id, post_id, filename)
+            stored_path = upload_from_url(url, minio_path)
+            if stored_path:
+                asset_row = {
                     "post_id": post_db_id,
                     "creator_id": creator_id,
-                    "asset_type": "thumbnail",
-                    "minio_path": stored_thumb,
-                    "original_url": post["thumbnail_url"],
+                    "asset_type": asset_type,
+                    "minio_path": stored_path,
+                    "original_url": url,
                     "analysis_status": "pending",
                 }
-                assets = insert("media_assets", thumb_row)
-                if assets:
-                    saved_assets.extend(assets)
+                result = insert("media_assets", asset_row)
+                if result:
+                    saved_assets.extend(result)
 
     log.info(f"[Stage 4] Saved {len(saved_posts)} posts, {len(saved_assets)} media assets")
+
+    # Save raw posts JSON per creator to MinIO
+    try:
+        from src.storage.minio import upload_bytes
+        import json as _json
+        from collections import defaultdict
+        posts_by_creator = defaultdict(list)
+        for p in raw_posts:
+            posts_by_creator[p.get("username","unknown")].append(p)
+        for username, creator_posts in posts_by_creator.items():
+            uid = creator_user_id_map.get(username, username)
+            raw_path = f"{platform}/{country_iso}/{uid}/raw_posts.json"
+            upload_bytes(
+                _json.dumps(creator_posts, ensure_ascii=False, default=str).encode("utf-8"),
+                raw_path, content_type="application/json"
+            )
+    except Exception as e:
+        log.warning(f"Failed to save raw posts JSON to MinIO: {e}")
+
     return saved_posts, saved_assets
 
 

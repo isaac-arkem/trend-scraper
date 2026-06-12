@@ -9,6 +9,9 @@ Return only JSON. No extra text.
 
 {
   "person_visible": true or false,
+  "person_is_female": true or false or null,
+  "is_child": true or false,
+  "is_ad_or_product": true or false,
   "confidence": 0.0 to 1.0,
   "body_frame": "petite|slim|average|curvy|athletic|plus|unclear",
   "body_shape": "pear|balanced|apple|unclear",
@@ -26,6 +29,9 @@ Return only JSON. No extra text.
 
 Rules:
 - If no person is clearly visible, set person_visible to false and all other fields to "unclear" or [].
+- person_is_female: true if clearly adult female, false if clearly male, null if unclear or no person.
+- is_child: true if the main subject is a child or minor.
+- is_ad_or_product: true if the image is primarily a product ad with no real person as subject.
 - fashion_style and content_style are arrays, include all that apply.
 - Be conservative: when unsure, use "unclear".
 - Do not guess or infer. Only describe what is clearly visible."""

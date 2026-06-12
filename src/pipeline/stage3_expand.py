@@ -102,9 +102,10 @@ def _expand_tiktok(seeds: list[dict], pool: dict, seed_usernames: set, max_candi
     per_creator_limit = max(50, max_candidates // max(len(seeds), 1))
     for creator in seeds:
         username = creator.get("username")
+        user_id = creator.get("platform_user_id")
         if not username:
             continue
-        following = scrape_following(username, limit=per_creator_limit)
+        following = scrape_following(username, limit=per_creator_limit, user_id=user_id)
         for f in following:
             u = (f.get("username") or "").lower().strip()
             if u and u not in seed_usernames:

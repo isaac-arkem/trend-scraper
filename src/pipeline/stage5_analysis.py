@@ -10,22 +10,23 @@ log = get_logger(__name__)
 def run(market_id: str, platform: str, max_assets: int = 500) -> list[dict]:
     db = get_db()
 
-    # Fetch pending assets for this market
-    pending = (
-        db.table("media_assets")
-        .select("*, posts(creator_id, creators(market_id))")
-        .eq("analysis_status", "pending")
-        .in_("asset_type", ["image", "thumbnail", "frame"])
-        .limit(max_assets)
-        .execute()
-        .data
-    )
+    # Get creator_ids for this market directly (no complex join)
+    creator_rows = db.table("creators").select("id").eq("market_id", market_id).eq("platform", platform).execute().data
+    creator_ids = [c["id"] for c in creator_rows]
+    if not creator_ids:
+        log.warning(f"[Stage 5] No creators found for market {market_id}")
+        return []
 
-    # Filter to this market only
-    pending = [
-        a for a in pending
-        if a.get("posts", {}).get("creators", {}).get("market_id") == market_id
-    ]
+    # Fetch pending assets for these creators in batches
+    pending = []
+    for i in range(0, len(creator_ids), 100):
+        batch = creator_ids[i:i+100]
+        rows = db.table("media_assets").select("*").eq("analysis_status", "pending")\
+            .in_("asset_type", ["image", "thumbnail", "frame", "video"])\
+            .in_("creator_id", batch).limit(max_assets - len(pending)).execute().data or []
+        pending.extend(rows)
+        if len(pending) >= max_assets:
+            break
 
     if not pending:
         log.info("[Stage 5] No pending media assets to analyze")
@@ -46,22 +47,41 @@ def run(market_id: str, platform: str, max_assets: int = 500) -> list[dict]:
         result = None
 
         if asset_type == "video":
+            # Real video file — extract frames and analyze best one
             frames = download_video_and_extract(original_url, max_frames=6)
             for frame_bytes in frames:
-                result = analyze_image_bytes(frame_bytes)
-                if result and result.get("person_visible"):
+                r = analyze_image_bytes(frame_bytes)
+                if r and r.get("person_visible"):
+                    result = r
                     break
+            if not result and frames:
+                result = analyze_image_bytes(frames[0])
         else:
-            # Download bytes first — Instagram CDN URLs expire and can't be
-            # passed directly to OpenAI. Sending as base64 always works.
-            try:
-                import httpx
-                r = httpx.get(original_url, follow_redirects=True, timeout=20,
-                              headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"})
-                r.raise_for_status()
-                result = analyze_image_bytes(r.content)
-            except Exception as e:
-                log.warning(f"Failed to download image for analysis: {e}")
+            # Image or carousel frame — try MinIO first, fall back to original URL
+            image_bytes = None
+            if asset.get("minio_path"):
+                try:
+                    from src.storage.minio import get_minio
+                    import os as _os
+                    mc = get_minio()
+                    bucket = _os.environ.get("MINIO_BUCKET", "social-intel")
+                    obj = mc.get_object(bucket, asset["minio_path"])
+                    image_bytes = obj.read()
+                except Exception:
+                    pass
+            if not image_bytes and original_url:
+                try:
+                    import httpx as _httpx
+                    r = _httpx.get(original_url, follow_redirects=True, timeout=20,
+                                   headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                                            "Referer": "https://www.instagram.com/"})
+                    r.raise_for_status()
+                    image_bytes = r.content
+                except Exception as e:
+                    log.warning(f"Failed to download image: {e}")
+            if image_bytes:
+                result = analyze_image_bytes(image_bytes)
+            else:
                 result = None
 
         if not result:
@@ -69,6 +89,14 @@ def run(market_id: str, platform: str, max_assets: int = 500) -> list[dict]:
             continue
 
         if not result.get("person_visible"):
+            update("media_assets", {"id": asset_id}, {"analysis_status": "skipped"})
+            continue
+
+        # Skip non-female, children, and ads — female only
+        if result.get("person_is_female") is not True:
+            update("media_assets", {"id": asset_id}, {"analysis_status": "skipped"})
+            continue
+        if result.get("is_child") is True or result.get("is_ad_or_product") is True:
             update("media_assets", {"id": asset_id}, {"analysis_status": "skipped"})
             continue
 

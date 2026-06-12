@@ -57,6 +57,23 @@ def scrape_comments(post_urls: list[str], limit: int = 200) -> list[dict]:
 
 
 def _normalise_post(i: dict) -> dict:
+    post_type = i.get("type", "")
+    is_video = i.get("isVideo") or post_type == "Video"
+    is_carousel = post_type == "Sidecar"
+
+    # Collect all media URLs for this post
+    all_images = []
+    if is_carousel:
+        # Carousel: grab all images from childPosts
+        for child in (i.get("childPosts") or []):
+            url = child.get("displayUrl") or child.get("url")
+            if url:
+                all_images.append(url)
+        if not all_images:
+            all_images = [u for u in (i.get("images") or []) if u]
+    if not all_images:
+        all_images = [i.get("displayUrl")] if i.get("displayUrl") else []
+
     return {
         "platform": "instagram",
         "username": i.get("ownerUsername", "").lower().strip(),
@@ -67,9 +84,11 @@ def _normalise_post(i: dict) -> dict:
         "likes": i.get("likesCount") or 0,
         "comments_count": i.get("commentsCount") or 0,
         "views": i.get("videoViewCount") or 0,
-        "media_type": "video" if i.get("isVideo") else "image",
+        "media_type": "video" if is_video else ("carousel" if is_carousel else "image"),
         "media_url": i.get("videoUrl") or i.get("displayUrl"),
         "thumbnail_url": i.get("displayUrl"),
+        "all_images": all_images,
+        "video_url": i.get("videoUrl"),
         "posted_at": i.get("timestamp"),
     }
 

@@ -43,7 +43,11 @@ const SKIN_BG={porcelain:'#F9EDE3',fair:'#F5D5BB',light:'#E8B89A',medium:'#C8855
                olive:'#A0694A','golden-tan':'#8B5E3C',tan:'#7A4F30',caramel:'#5C3319',
                deep:'#3B1F10',dark:'#1C0D05'};
 
-const IMG = (url) => url ? `/img?u=${encodeURIComponent(url)}` : '';
+const IMG = (url, minio_path) => {
+  if (minio_path) return `/img-minio?p=${encodeURIComponent(minio_path)}`;
+  if (url) return `/img?u=${encodeURIComponent(url)}`;
+  return '';
+};
 
 // ── API ──────────────────────────────────────────────────────────────────────
 const api = {
@@ -96,21 +100,75 @@ function AnalysisTags({a}) {
   return <div style={{display:'flex',flexWrap:'wrap',gap:0}}>{tags}</div>;
 }
 
-function PhotoCell({url, analysis, height=160}) {
-  const [err,setErr]=useState(false);
-  return <div style={{position:'relative',borderRadius:4,overflow:'hidden',background:S2,
-    border:`1px solid ${BR}`,flex:'1 1 150px',minWidth:130}}>
-    {!err && url ? <img src={IMG(url)}
-      onError={()=>setErr(true)}
-      style={{width:'100%',height,objectFit:'cover',display:'block',transition:'transform .3s'}}
-      onMouseOver={e=>e.currentTarget.style.transform='scale(1.04)'}
-      onMouseOut={e=>e.currentTarget.style.transform='scale(1)'}
-    /> : <div style={{width:'100%',height,background:S3,display:'flex',alignItems:'center',
-      justifyContent:'center',color:DI,fontSize:11}}>no image</div>}
-    {analysis && <div style={{padding:'6px 4px 4px'}}>
-      <AnalysisTags a={analysis}/>
-    </div>}
+// ── lightbox ──────────────────────────────────────────────────────────────────
+function Lightbox({src, asset_type, analysis, onClose, embedUrl}) {
+  if(!src && !embedUrl) return null;
+  return <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.92)',
+    zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',cursor:'zoom-out'}}>
+    <div onClick={e=>e.stopPropagation()} style={{maxWidth:'90vw',maxHeight:'90vh',position:'relative'}}>
+      {embedUrl
+        ? <iframe src={embedUrl} style={{width:325,height:740,border:'none',borderRadius:8,display:'block'}}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"/>
+        : asset_type==='video'
+          ? <video src={src} controls autoPlay muted style={{maxWidth:'90vw',maxHeight:'80vh',borderRadius:6,display:'block'}}/>
+          : <img src={src} style={{maxWidth:'90vw',maxHeight:'80vh',objectFit:'contain',borderRadius:6,display:'block'}}/>}
+      {analysis && <div style={{position:'absolute',bottom:0,left:0,right:0,padding:'8px 12px',
+        background:'linear-gradient(transparent,rgba(0,0,0,.8))',borderRadius:'0 0 6px 6px'}}>
+        <AnalysisTags a={analysis}/>
+      </div>}
+      <button onClick={onClose} style={{position:'absolute',top:-12,right:-12,background:G,
+        color:BK,border:'none',borderRadius:'50%',width:28,height:28,fontSize:16,fontWeight:700,cursor:'pointer'}}>×</button>
+    </div>
   </div>;
+}
+
+function getTikTokEmbed(post_url) {
+  if(!post_url) return null;
+  const m = post_url.match(/\/video\/(\d+)/);
+  return m ? "https://www.tiktok.com/embed/v2/"+m[1] : null;
+}
+
+function PhotoCell({url, minio_path, asset_type, analysis, post_url, height=160}) {
+  const [err,setErr]=useState(false);
+  const [open,setOpen]=useState(false);
+  const src = IMG(url, minio_path);
+  const embedUrl = getTikTokEmbed(post_url);
+  return <>
+    {open && <Lightbox src={src} asset_type={asset_type} analysis={analysis} onClose={()=>setOpen(false)} embedUrl={embedUrl}/>}
+    <div onClick={()=>(src||embedUrl)&&setOpen(true)}
+      style={{position:'relative',borderRadius:4,overflow:'hidden',background:S2,
+      border:`1px solid ${BR}`,flex:'1 1 150px',minWidth:130,cursor:(src||embedUrl)?'zoom-in':'default'}}>
+      {embedUrl
+        ? <div style={{position:'relative',width:'100%',height,background:S3,overflow:'hidden'}}>
+            <img src={src||''} onError={e=>e.currentTarget.style.display='none'}
+              style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}/>
+            <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',
+              background:'rgba(0,0,0,.3)'}}>
+              <div style={{width:44,height:44,borderRadius:'50%',background:'rgba(255,255,255,.9)',
+                display:'flex',alignItems:'center',justifyContent:'center'}}>
+                <div style={{width:0,height:0,borderTop:'10px solid transparent',borderBottom:'10px solid transparent',
+                  borderLeft:'18px solid #000',marginLeft:4}}/>
+              </div>
+            </div>
+          </div>
+        : asset_type==='video' && src
+          ? <video src={src} style={{width:'100%',height,objectFit:'cover',display:'block'}}
+              muted loop onMouseOver={e=>e.currentTarget.play()} onMouseOut={e=>{e.currentTarget.pause();e.currentTarget.currentTime=0;}}/>
+          : !err && (url||minio_path) ? <img src={IMG(url, minio_path)}
+              onError={()=>setErr(true)}
+              style={{width:'100%',height,objectFit:'cover',display:'block',transition:'transform .3s'}}
+              onMouseOver={e=>e.currentTarget.style.transform='scale(1.04)'}
+              onMouseOut={e=>e.currentTarget.style.transform='scale(1)'}
+            /> : <div style={{width:'100%',height,background:S3,display:'flex',alignItems:'center',
+              justifyContent:'center',color:DI,fontSize:11}}>no image</div>}
+      {(embedUrl || asset_type==='video') && <div style={{position:'absolute',top:6,right:6,background:'rgba(0,0,0,.7)',
+        color:'#fff',fontSize:9,padding:'2px 6px',borderRadius:3,fontWeight:700}}>
+        {embedUrl ? '▶ TIKTOK' : 'VIDEO'}</div>}
+      {analysis && <div style={{padding:'6px 4px 4px'}}>
+        <AnalysisTags a={analysis}/>
+      </div>}
+    </div>
+  </>;
 }
 
 // ── bar chart ─────────────────────────────────────────────────────────────────
@@ -282,7 +340,7 @@ function CreatorCard({c,media,totalLikes}) {
     <div style={{display:'flex',flexWrap:'wrap',gap:5,padding:'10px 14px 12px'}}>
       {media.length===0
         ? <div style={{color:DI,fontSize:11,padding:'16px 0',textAlign:'center',width:'100%'}}>No images scraped</div>
-        : media.slice(0,6).map((m,i)=><PhotoCell key={i} url={m.original_url} analysis={m.analysis} height={150}/>)
+        : media.slice(0,6).map((m,i)=><PhotoCell key={i} url={m.original_url} minio_path={m.minio_path} asset_type={m.asset_type} analysis={m.analysis} post_url={m.post_url} height={150}/>)
       }
     </div>
   </div>;
@@ -290,7 +348,7 @@ function CreatorCard({c,media,totalLikes}) {
 
 // ── AI ANALYSIS ──────────────────────────────────────────────────────────────
 function AIAnalysis({data}) {
-  const {analysis=[],media=[]} = data;
+  const {analysis=[],media=[],analysis_media={}} = data;
   if(!analysis.length) return <div style={{marginTop:60,textAlign:'center'}}>
     <div style={{color:MU,fontSize:14,marginBottom:8}}>No AI analysis results yet.</div>
     <div style={{color:DI,fontSize:12,marginBottom:12}}>Run stage 5 to analyze images with GPT-4o Vision:</div>
@@ -311,7 +369,7 @@ function AIAnalysis({data}) {
   };
 
   const skinColors = cnt('skin_tone').map(([k])=>SKIN_BG[k]||G);
-  const mediaById  = Object.fromEntries(media.map(m=>[m.id,m]));
+  const mediaById = {...Object.fromEntries(media.map(m=>[m.id,m])), ...analysis_media};
 
   return <div>
     <div style={{color:MU,fontSize:12,marginBottom:20}}>
@@ -337,10 +395,11 @@ function AIAnalysis({data}) {
       {analysis.slice(0,48).map((a,i)=>{
         const m = mediaById[a.media_asset_id];
         const url = (m && m.original_url)||'';
+        const minio_path = (m && m.minio_path)||'';
         const conf = a.confidence||0;
         return <div key={i} style={{flex:'1 1 calc(12.5% - 8px)',minWidth:155,maxWidth:200,
           background:S2,border:`1px solid ${BR}`,borderRadius:6,overflow:'hidden',padding:6}}>
-          <GalleryImg url={url}/>
+          <GalleryImg url={url} minio_path={minio_path}/>
           <div style={{paddingTop:6}}>
             <div style={{fontSize:9,color:conf>.8?GR:AM,letterSpacing:'1px',marginBottom:3}}>
               {Math.round(conf*100)}% CONF
@@ -353,12 +412,13 @@ function AIAnalysis({data}) {
   </div>;
 }
 
-function GalleryImg({url}) {
+function GalleryImg({url, minio_path}) {
   const [err,setErr]=useState(false);
-  return err||!url
+  const src = IMG(url, minio_path);
+  return err||!src
     ? <div style={{width:'100%',height:180,background:S3,borderRadius:4,display:'flex',
         alignItems:'center',justifyContent:'center',color:DI,fontSize:10}}>no image</div>
-    : <img src={IMG(url)} onError={()=>setErr(true)}
+    : <img src={src} onError={()=>setErr(true)}
         style={{width:'100%',height:180,objectFit:'cover',borderRadius:4,display:'block'}}/>;
 }
 

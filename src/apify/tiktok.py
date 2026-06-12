@@ -45,10 +45,15 @@ def scrape_profiles(usernames: list[str], limit: int = 1) -> list[dict]:
     return [_normalise_profile(i) for i in items]
 
 
-def scrape_following(username: str, limit: int = 200) -> list[dict]:
+def scrape_following(username: str, limit: int = 200, user_id: str = None) -> list[dict]:
+    run_input = {"listType": "following", "maxItems": limit}
+    if user_id:
+        run_input["userId"] = user_id
+    else:
+        run_input["username"] = username
     items = run_actor(
         FOLLOWING_ACTOR,
-        {"username": username, "listType": "following", "maxItems": limit},
+        run_input,
         label=f"TT:following:{username}",
     )
     return [_normalise_follow(i) for i in items if i.get("uniqueId")]
@@ -78,8 +83,8 @@ def _normalise_post(i: dict) -> dict:
         "views": i.get("playCount") or 0,
         "shares": i.get("shareCount") or 0,
         "media_type": "video",
-        "media_url": _get_nested(i, "videoUrl") or i.get("webVideoUrl"),
-        "thumbnail_url": _get_nested(i, "covers", 0),
+        "media_url": i.get("webVideoUrl"),
+        "thumbnail_url": _get_nested(i, "videoMeta", "coverUrl") or _get_nested(i, "covers", 0),
         "posted_at": i.get("createTimeISO"),
         "music_id": str(music.get("musicId", "")),
     }

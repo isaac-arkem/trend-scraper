@@ -63,6 +63,16 @@ def run(
             hashtag_match=1,
         )
 
+        # Basic male/brand filter — skip obviously non-female accounts
+        username_lower = (p.get("username") or "").lower()
+        bio_lower = (bio or "").lower()
+        male_signals = ["official", "motors", "cars", "auto", "jewelry", "jewellery",
+                        "restaurant", "food", "hotel", "real estate", "property",
+                        "photography", "photographer"]
+        if any(s in username_lower or s in bio_lower for s in male_signals):
+            filtered_out += 1
+            continue
+
         source = "seed" if p.get("username") in seed_profiles else "hashtag_discovery"
 
         row = {
@@ -92,5 +102,20 @@ def run(
     if enriched:
         db_rows = [{k: v for k, v in r.items() if not k.startswith("_")} for r in enriched]
         upsert("creators", db_rows, on_conflict="platform,username")
+
+        # Save raw Apify profile JSON to MinIO
+        try:
+            from src.storage.minio import upload_bytes, build_path
+            import json as _json
+            country_iso = market.get("country_code", "XX")
+            for r in enriched:
+                uid = r.get("platform_user_id") or r.get("username")
+                raw_path = f"{platform}/{country_iso}/{uid}/raw_profile.json"
+                upload_bytes(
+                    _json.dumps(r, ensure_ascii=False, default=str).encode("utf-8"),
+                    raw_path, content_type="application/json"
+                )
+        except Exception as e:
+            log.warning(f"Failed to save raw profile JSON to MinIO: {e}")
 
     return enriched
