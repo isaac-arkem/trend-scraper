@@ -69,16 +69,26 @@ def run(
         db_rows = [{k: v for k, v in r.items() if not k.startswith("_")} for r in new_candidates]
         upsert("creators", db_rows, on_conflict="platform,username")
 
-        # Save cluster edges
-        _save_edges(enriched_creators, new_candidates, run_id, platform)
+    # Always save edges — between seeds and new candidates, AND between seeds themselves
+    _save_edges(enriched_creators, new_candidates, run_id, platform)
+    _save_seed_edges(enriched_creators, run_id, platform, candidate_pool)
 
     return enriched_creators + new_candidates
 
 
 def _expand_instagram(seeds: list[dict], pool: dict, seed_usernames: set) -> None:
-    # Edge 1: relatedProfiles from profile scraper results
+    # Edge 1: re-fetch relatedProfiles from profile scraper (handles both in-memory and DB-loaded creators)
+    usernames_to_fetch = [c["username"] for c in seeds if not c.get("_related_profiles")]
+    if usernames_to_fetch:
+        fresh_profiles = ig_profiles(usernames_to_fetch[:50])  # batch of 50
+        fresh_map = {p["username"]: p for p in fresh_profiles}
+        for creator in seeds:
+            if not creator.get("_related_profiles"):
+                fresh = fresh_map.get(creator["username"], {})
+                creator["_related_profiles"] = fresh.get("related_profiles", [])
+
     for creator in seeds:
-        for related_username in creator.get("_related_profiles", []):
+        for related_username in (creator.get("_related_profiles") or []):
             u = related_username.lower().strip()
             if u and u not in seed_usernames:
                 if u not in pool:
@@ -112,6 +122,35 @@ def _expand_tiktok(seeds: list[dict], pool: dict, seed_usernames: set, max_candi
                 if u not in pool:
                     pool[u] = {**f, "source_type": "following", "_connections": 0}
                 pool[u]["_connections"] += 1
+
+
+def _save_seed_edges(seeds: list[dict], run_id: str, platform: str, pool: dict) -> None:
+    """Save related_profile edges between seed creators and pool candidates."""
+    db = get_db()
+    all_usernames = [c["username"] for c in seeds] + list(pool.keys())
+    if not all_usernames:
+        return
+    rows = db.table("creators").select("id,username").in_("username", all_usernames[:200]).execute().data
+    id_map = {r["username"]: r["id"] for r in rows}
+    edges = []
+    for creator in seeds:
+        src_id = id_map.get(creator["username"])
+        if not src_id:
+            continue
+        for related_username in (creator.get("_related_profiles") or []):
+            tgt_id = id_map.get(related_username.lower().strip())
+            if tgt_id and tgt_id != src_id:
+                edges.append({
+                    "source_creator_id": src_id,
+                    "target_creator_id": tgt_id,
+                    "edge_type": "related_profile",
+                    "platform": platform,
+                    "weight": 1.0,
+                    "run_id": run_id,
+                })
+    if edges:
+        upsert("cluster_edges", edges, on_conflict="source_creator_id,target_creator_id,edge_type")
+        log.info(f"[Stage 3] Saved {len(edges)} seed edges")
 
 
 def _save_edges(sources: list[dict], targets: list[dict], run_id: str, platform: str) -> None:

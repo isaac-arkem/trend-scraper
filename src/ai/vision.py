@@ -1,8 +1,10 @@
 import os
 import json
+import time
 import base64
+import threading
 import httpx
-from openai import OpenAI
+from openai import OpenAI, RateLimitError, APITimeoutError, APIConnectionError, InternalServerError
 from dotenv import load_dotenv
 from src.ai.prompts import VISION_SYSTEM, VISION_USER
 from src.utils.logger import get_logger
@@ -10,14 +12,47 @@ from src.utils.logger import get_logger
 load_dotenv()
 log = get_logger(__name__)
 
-_client: OpenAI | None = None
+# Thread-local so each parallel worker has its own HTTP connection pool.
+_local = threading.local()
 
 
 def get_openai() -> OpenAI:
-    global _client
-    if _client is None:
-        _client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-    return _client
+    client = getattr(_local, "client", None)
+    if client is None:
+        client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        _local.client = client
+    return client
+
+
+_TRANSIENT = (RateLimitError, APITimeoutError, APIConnectionError, InternalServerError)
+
+
+class QuotaExceededError(Exception):
+    """OpenAI account is out of quota/credit — not transient. Halts the run
+    instead of being retried or marking assets failed."""
+
+
+def _is_quota(e: Exception) -> bool:
+    return "insufficient_quota" in str(e) or getattr(e, "code", None) == "insufficient_quota"
+
+
+def _create_with_retry(**kwargs):
+    """Call chat.completions with exponential backoff on transient errors
+    (rate limits, timeouts, 5xx). Lets the parallel driver survive throttling
+    instead of marking assets failed. Quota errors raise QuotaExceededError
+    immediately (no retry); other non-transient errors propagate as-is."""
+    delay = 2
+    for attempt in range(6):
+        try:
+            return get_openai().chat.completions.create(**kwargs)
+        except _TRANSIENT as e:
+            if _is_quota(e):
+                raise QuotaExceededError(str(e)) from e
+            if attempt == 5:
+                raise
+            log.debug(f"Transient OpenAI error ({type(e).__name__}), retry in {delay}s")
+            time.sleep(delay)
+            delay = min(delay * 2, 30)
 
 
 def analyze_image_url(image_url: str) -> dict | None:
@@ -100,7 +135,7 @@ def analyze_image_bytes(image_bytes: bytes, mime: str = "image/jpeg") -> dict | 
             image_bytes_c, mime = _compress_image(image_bytes, max_kb=max_kb)
             b64 = base64.b64encode(image_bytes_c).decode("utf-8")
             data_url = f"data:{mime};base64,{b64}"
-            resp = get_openai().chat.completions.create(
+            resp = _create_with_retry(
                 model="gpt-4o",
                 messages=[
                     {"role": "system", "content": VISION_SYSTEM},
@@ -117,6 +152,8 @@ def analyze_image_bytes(image_bytes: bytes, mime: str = "image/jpeg") -> dict | 
             )
             raw = resp.choices[0].message.content.strip()
             return normalise_result(_parse_json(raw))
+        except QuotaExceededError:
+            raise  # not transient — let it halt the run, don't mark asset failed
         except Exception as e:
             if "431" in str(e):
                 log.debug(f"431 on {max_kb}KB image, retrying smaller")

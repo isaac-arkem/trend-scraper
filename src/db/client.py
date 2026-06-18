@@ -1,19 +1,24 @@
 import os
+import threading
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
 load_dotenv()
 
-_client: Client | None = None
+# Thread-local client: the Supabase client wraps a single httpx.Client whose
+# connection pool is not safe to share across many worker threads. Each thread
+# gets its own client so the parallel Stage 5 driver doesn't exhaust sockets.
+_local = threading.local()
 
 
 def get_db() -> Client:
-    global _client
-    if _client is None:
+    client = getattr(_local, "client", None)
+    if client is None:
         url = os.environ["SUPABASE_URL"]
         key = os.environ["SUPABASE_SECRET_KEY"]
-        _client = create_client(url, key)
-    return _client
+        client = create_client(url, key)
+        _local.client = client
+    return client
 
 
 def upsert(table: str, data: dict | list, on_conflict: str = None) -> list:

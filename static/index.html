@@ -49,11 +49,31 @@ const IMG = (url, minio_path) => {
   return '';
 };
 
+// Profile picture from MinIO (deterministic path: profiles/<platform>/<id>.jpg),
+// matching scrape_profile_pics.py. Falls back to the (possibly expired) CDN url.
+const PFP = (c) => {
+  const key = c.platform_user_id || c.username;
+  if (c.platform && key) return `/img-minio?p=${encodeURIComponent('profiles/'+c.platform+'/'+key+'.jpg')}`;
+  if (c.profile_pic_url) return `/img?u=${encodeURIComponent(c.profile_pic_url)}`;
+  return '';
+};
+
+function Avatar({c, size=36}) {
+  return <div style={{width:size,height:size,borderRadius:'50%',overflow:'hidden',flexShrink:0,
+    background:'#1C0D05',border:'1px solid #2A2A2A'}}>
+    <img src={PFP(c)} onError={e=>{e.currentTarget.style.display='none';}}
+      style={{width:'100%',height:'100%',objectFit:'cover'}}/>
+  </div>;
+}
+
 // ── API ──────────────────────────────────────────────────────────────────────
 const api = {
   markets: () => fetch('/api/markets').then(r=>r.json()),
   data: (m,p) => fetch(`/api/data?market=${m}&platform=${p}`).then(r=>r.json()),
+  trends: (platform,minViews,region) => fetch(`/api/trends?platform=${platform||''}&min_views=${minViews||0}&region=${region||''}`).then(r=>r.json()),
+  trendStatus: (id,status) => fetch('/api/trend-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,status})}).then(r=>r.json()),
 };
+const TREND_FILE = (p) => p ? `/trend-file?p=${encodeURIComponent(p)}` : '';
 
 // ── tiny components ──────────────────────────────────────────────────────────
 function Tag({label, color, bg}) {
@@ -230,6 +250,7 @@ function Overview({data}) {
               borderBottom:`1px solid ${BR}`,background:i%2?S2:S1}}>
               <span style={{fontFamily:'Space Grotesk',fontSize:18,fontWeight:700,
                 color:i<3?G:MU,minWidth:36}}>#{i+1}</span>
+              <Avatar c={c} size={36}/>
               <div style={{flex:1}}>
                 <a href={"https://instagram.com/" + c.username} target="_blank"
                   style={{fontSize:14,fontWeight:600,color:TX}}>{"@"+c.username}</a>
@@ -312,10 +333,13 @@ function CreatorCard({c,media,totalLikes}) {
     {/* header */}
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',
       padding:'14px 16px 10px',borderBottom:`1px solid ${BR}`}}>
-      <div>
-        <a href={"https://instagram.com/" + c.username} target="_blank"
-          style={{fontFamily:'Space Grotesk',fontSize:15,fontWeight:700,color:TX}}>{"@"+c.username}</a>
-        <div style={{fontSize:11,color:MU,marginTop:2}}>{(c.followers||0).toLocaleString()} followers</div>
+      <div style={{display:'flex',alignItems:'center',gap:10}}>
+        <Avatar c={c} size={40}/>
+        <div>
+          <a href={"https://instagram.com/" + c.username} target="_blank"
+            style={{fontFamily:'Space Grotesk',fontSize:15,fontWeight:700,color:TX}}>{"@"+c.username}</a>
+          <div style={{fontSize:11,color:MU,marginTop:2}}>{(c.followers||0).toLocaleString()} followers</div>
+        </div>
       </div>
       <div style={{textAlign:'right'}}>
         <div style={{fontFamily:'Space Grotesk',fontSize:20,fontWeight:700,color:G,lineHeight:1}}>{(c.total_score||0).toFixed(3)}</div>
@@ -348,13 +372,12 @@ function CreatorCard({c,media,totalLikes}) {
 
 // ── AI ANALYSIS ──────────────────────────────────────────────────────────────
 function AIAnalysis({data}) {
-  const {analysis=[],media=[],analysis_media={}} = data;
-  if(!analysis.length) return <div style={{marginTop:60,textAlign:'center'}}>
+  const {analysis=[],skipped_analysis=[],media=[],analysis_media={}} = data;
+  const [view,setView] = useState('women');
+
+  if(!analysis.length && !skipped_analysis.length) return <div style={{marginTop:60,textAlign:'center'}}>
     <div style={{color:MU,fontSize:14,marginBottom:8}}>No AI analysis results yet.</div>
-    <div style={{color:DI,fontSize:12,marginBottom:12}}>Run stage 5 to analyze images with GPT-4o Vision:</div>
-    <code style={{background:S2,color:G,padding:'8px 16px',borderRadius:4,fontSize:12}}>
-      uv run python main.py --market UAE --platform instagram --from-stage 5
-    </code>
+    <div style={{color:DI,fontSize:12}}>Run Stage 5 to analyze images with GPT-4o Vision.</div>
   </div>;
 
   const cnt=(f)=>{
@@ -367,48 +390,81 @@ function AIAnalysis({data}) {
     analysis.forEach(a=>(a[f]||[]).forEach(v=>m[v]=(m[v]||0)+1));
     return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,8);
   };
-
   const skinColors = cnt('skin_tone').map(([k])=>SKIN_BG[k]||G);
   const mediaById = {...Object.fromEntries(media.map(m=>[m.id,m])), ...analysis_media};
 
+  // skip-type breakdown
+  const skipCounts = {};
+  skipped_analysis.forEach(a=>{const t=a.subject_type||'unclear'; skipCounts[t]=(skipCounts[t]||0)+1;});
+
+  const SubTab = ({id,label,count,color})=>(
+    <button onClick={()=>setView(id)} style={{
+      padding:'8px 18px',fontSize:12,fontWeight:700,letterSpacing:'.5px',
+      background:view===id?color:S2,color:view===id?BK:MU,
+      border:`1px solid ${view===id?color:BR}`,borderRadius:6,marginRight:8,cursor:'pointer'}}>
+      {label} <span style={{opacity:.7}}>({count})</span>
+    </button>
+  );
+
   return <div>
-    <div style={{color:MU,fontSize:12,marginBottom:20}}>
-      {analysis.length} images analyzed · person detected
+    <div style={{display:'flex',alignItems:'center',marginBottom:24}}>
+      <SubTab id="women" label="👩 WOMEN" count={analysis.length} color={G}/>
+      <SubTab id="skipped" label="⊘ SKIPPED (MEN / KIDS / ADS)" count={skipped_analysis.length} color={MU}/>
     </div>
 
-    <Section title="APPEARANCE DISTRIBUTIONS"/>
-    <div style={{display:'flex',flexWrap:'wrap',gap:12,marginBottom:12}}>
-      <BarChart title="SKIN TONE"    items={cnt('skin_tone')}   colors={skinColors}/>
-      <BarChart title="BODY FRAME"   items={cnt('body_frame')}/>
-      <BarChart title="MAKEUP STYLE" items={cnt('makeup_style')} colors={['#CE93D8','#D8A0DC','#BA68C8','#9C27B0','#AB47BC','#7B1FA2']}/>
-    </div>
-    <div style={{display:'flex',flexWrap:'wrap',gap:12,marginBottom:40}}>
-      <BarChart title="HAIR COLOR"   items={cnt('hair_color')}  colors={[AM,'#7B3F00',GL,'#FF6B35','#9C27B0',MU,'#F5F5F5','#4A4A4A']}/>
-      <BarChart title="HAIR LENGTH"  items={cnt('hair_length')}/>
-      <BarChart title="HAIR TEXTURE" items={cnt('hair_texture')}/>
-      <BarChart title="FASHION"      items={arrCnt('fashion_style')}/>
-      <BarChart title="CONTENT"      items={arrCnt('content_style')} colors={[GR,'#81C784','#A5D6A7','#66BB6A','#43A047','#2E7D32']}/>
-    </div>
-
-    <Section title="IMAGE GALLERY WITH AI DESCRIPTORS"/>
-    <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
-      {analysis.slice(0,48).map((a,i)=>{
-        const m = mediaById[a.media_asset_id];
-        const url = (m && m.original_url)||'';
-        const minio_path = (m && m.minio_path)||'';
-        const conf = a.confidence||0;
-        return <div key={i} style={{flex:'1 1 calc(12.5% - 8px)',minWidth:155,maxWidth:200,
-          background:S2,border:`1px solid ${BR}`,borderRadius:6,overflow:'hidden',padding:6}}>
-          <GalleryImg url={url} minio_path={minio_path}/>
-          <div style={{paddingTop:6}}>
-            <div style={{fontSize:9,color:conf>.8?GR:AM,letterSpacing:'1px',marginBottom:3}}>
-              {Math.round(conf*100)}% CONF
+    {view==='women' ? <>
+      <div style={{color:MU,fontSize:12,marginBottom:20}}>{analysis.length} female creators analyzed</div>
+      <Section title="APPEARANCE DISTRIBUTIONS"/>
+      <div style={{display:'flex',flexWrap:'wrap',gap:12,marginBottom:12}}>
+        <BarChart title="SKIN TONE"    items={cnt('skin_tone')}   colors={skinColors}/>
+        <BarChart title="BODY FRAME"   items={cnt('body_frame')}/>
+        <BarChart title="MAKEUP STYLE" items={cnt('makeup_style')} colors={['#CE93D8','#D8A0DC','#BA68C8','#9C27B0','#AB47BC','#7B1FA2']}/>
+      </div>
+      <div style={{display:'flex',flexWrap:'wrap',gap:12,marginBottom:40}}>
+        <BarChart title="HAIR COLOR"   items={cnt('hair_color')}  colors={[AM,'#7B3F00',GL,'#FF6B35','#9C27B0',MU,'#F5F5F5','#4A4A4A']}/>
+        <BarChart title="HAIR LENGTH"  items={cnt('hair_length')}/>
+        <BarChart title="HAIR TEXTURE" items={cnt('hair_texture')}/>
+        <BarChart title="FASHION"      items={arrCnt('fashion_style')}/>
+        <BarChart title="CONTENT"      items={arrCnt('content_style')} colors={[GR,'#81C784','#A5D6A7','#66BB6A','#43A047','#2E7D32']}/>
+      </div>
+      <Section title="IMAGE GALLERY WITH AI DESCRIPTORS"/>
+      <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
+        {analysis.map((a,i)=>{
+          const m = mediaById[a.media_asset_id];
+          const conf = a.confidence||0;
+          return <div key={i} style={{flex:'1 1 calc(12.5% - 8px)',minWidth:155,maxWidth:200,
+            background:S2,border:`1px solid ${BR}`,borderRadius:6,overflow:'hidden',padding:6}}>
+            <GalleryImg url={(m&&m.original_url)||''} minio_path={(m&&m.minio_path)||''}/>
+            <div style={{paddingTop:6}}>
+              <div style={{fontSize:9,color:conf>.8?GR:AM,letterSpacing:'1px',marginBottom:3}}>{Math.round(conf*100)}% CONF</div>
+              <AnalysisTags a={a}/>
             </div>
-            <AnalysisTags a={a}/>
-          </div>
-        </div>;
-      })}
-    </div>
+          </div>;
+        })}
+      </div>
+    </> : <>
+      <div style={{color:MU,fontSize:12,marginBottom:16}}>
+        {skipped_analysis.length} images skipped from analysis ·
+        {Object.entries(skipCounts).map(([t,n])=>` ${t}: ${n}`).join(' ·')}
+      </div>
+      <Section title="SKIPPED IMAGES (NOT INCLUDED IN WOMEN ANALYSIS)"/>
+      <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
+        {skipped_analysis.map((a,i)=>{
+          const m = mediaById[a.media_asset_id];
+          const stColor={male:BL,child:AM,ad:RE,none:DI,unclear:DI}[a.subject_type]||DI;
+          return <div key={i} style={{flex:'1 1 calc(12.5% - 8px)',minWidth:155,maxWidth:200,
+            background:S2,border:`1px solid ${BR}`,borderRadius:6,overflow:'hidden',padding:6}}>
+            <GalleryImg url={(m&&m.original_url)||''} minio_path={(m&&m.minio_path)||''}/>
+            <div style={{paddingTop:6}}>
+              <span style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:3,
+                background:`${stColor}22`,color:stColor,border:`1px solid ${stColor}55`,textTransform:'uppercase'}}>
+                {a.subject_type}
+              </span>
+            </div>
+          </div>;
+        })}
+      </div>
+    </>}
   </div>;
 }
 
@@ -418,7 +474,7 @@ function GalleryImg({url, minio_path}) {
   return err||!src
     ? <div style={{width:'100%',height:180,background:S3,borderRadius:4,display:'flex',
         alignItems:'center',justifyContent:'center',color:DI,fontSize:10}}>no image</div>
-    : <img src={src} onError={()=>setErr(true)}
+    : <img src={src} onError={()=>setErr(true)} loading="lazy" decoding="async"
         style={{width:'100%',height:180,objectFit:'cover',borderRadius:4,display:'block'}}/>;
 }
 
@@ -465,6 +521,132 @@ function Section({title}) {
     borderBottom:`1px solid rgba(201,168,76,.2)`}}>{title}</div>;
 }
 
+// ── TRENDS ───────────────────────────────────────────────────────────────────
+function fmtN(n){ n=n||0; return n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'K':String(n); }
+function ageStr(iso){ if(!iso) return '—'; const h=(Date.now()-new Date(iso))/3.6e6; return h<24?Math.round(h)+'h ago':Math.round(h/24)+'d ago'; }
+
+function PlatBadge({p}){
+  const tt=p==='tiktok';
+  return <span style={{fontSize:9,fontWeight:700,letterSpacing:'1px',padding:'3px 8px',borderRadius:3,
+    background:tt?'#25F4EE22':'#E1306C22',color:tt?'#25F4EE':'#E1306C',border:`1px solid ${tt?'#25F4EE55':'#E1306C55'}`}}>
+    {tt?'TIKTOK':'REEL'}</span>;
+}
+
+function ClipVideo({clip,height=300}){
+  const src = clip.video_minio_path ? TREND_FILE(clip.video_minio_path) : null;
+  if(src) return <video src={src} controls loop playsInline preload="metadata"
+    style={{width:'100%',height,objectFit:'cover',background:'#000',borderRadius:6,display:'block'}}/>;
+  return <a href={clip.video_url} target="_blank" style={{display:'flex',height,alignItems:'center',justifyContent:'center',
+    background:S3,borderRadius:6,color:G,fontSize:12,textDecoration:'none'}}>▶ Open on {clip.platform}</a>;
+}
+
+function Stat({icon,n,color}){ return <span style={{fontSize:11,color:color||MU,marginRight:12}}>{icon} {fmtN(n)}</span>; }
+
+function TrendCard({t,onStatus}){
+  const c=t.clip||{}, s=c.sound||{};
+  const stColors={queued:AM,recreated:GR,skipped:DI};
+  return <div style={{background:S1,border:`1px solid ${c.suitability_flag?G:BR}`,borderRadius:8,overflow:'hidden',
+    borderLeft:`3px solid ${c.suitability_flag?G:BR}`}}>
+    <div style={{position:'relative'}}>
+      <ClipVideo clip={c}/>
+      <div style={{position:'absolute',top:8,left:8,display:'flex',gap:6,alignItems:'center'}}>
+        <PlatBadge p={c.platform}/>
+        {c.suitability_flag && <span style={{fontSize:9,fontWeight:700,padding:'3px 8px',borderRadius:3,
+          background:`${G}22`,color:G,border:`1px solid ${G}55`}}>★ PRIORITY</span>}
+      </div>
+    </div>
+    <div style={{padding:'12px 14px'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:6}}>
+        <div style={{fontFamily:'Space Grotesk',fontSize:22,fontWeight:700,color:G,lineHeight:1}}>
+          {fmtN(Math.round(t.velocity))}<span style={{fontSize:10,color:DI,fontWeight:400}}>/hr velocity</span></div>
+        <div style={{fontSize:11,color:MU}}>{fmtN(c.views)} views · {ageStr(c.posted_at)}</div>
+      </div>
+      <a href={c.video_url} target="_blank" style={{fontSize:12,color:TX,fontWeight:600}}>@{c.creator_handle}</a>
+      {/* sound */}
+      <div style={{display:'flex',alignItems:'center',gap:8,margin:'10px 0',padding:'8px 10px',
+        background:S2,borderRadius:6,border:`1px solid ${BR}`}}>
+        <span style={{fontSize:16}}>🎵</span>
+        <div style={{flex:1,minWidth:0}}>
+          <a href={s.sound_page_url||'#'} target="_blank" style={{fontSize:12,color:TX,fontWeight:600,
+            display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.name||'—'}</a>
+          <div style={{fontSize:10,color:DI}}>{s.author||''} · {fmtN(s.clip_count)} clips using</div>
+        </div>
+        {s.audio_minio_path && <audio src={TREND_FILE(s.audio_minio_path)} controls style={{height:30,width:170}}/>}
+        {s.audio_minio_path && <a href={TREND_FILE(s.audio_minio_path)} download
+          style={{fontSize:11,color:G,textDecoration:'none'}}>⬇</a>}
+      </div>
+      <div style={{marginBottom:8}}>
+        <Stat icon="❤" n={c.likes}/><Stat icon="💬" n={c.comments}/><Stat icon="↗" n={c.shares}/><Stat icon="🔖" n={c.saves}/>
+      </div>
+      <div style={{fontSize:10,color:MU,marginBottom:10,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+        {(c.hashtags||[]).slice(0,6).map(h=>'#'+h).join(' ')}</div>
+      <div style={{display:'flex',gap:6}}>
+        {['queued','recreated','skipped'].map(st=>(
+          <button key={st} onClick={()=>onStatus(t.id,st)}
+            style={{flex:1,padding:'6px',fontSize:10,fontWeight:700,letterSpacing:'.5px',textTransform:'uppercase',
+              cursor:'pointer',borderRadius:4,border:`1px solid ${t.status===st?stColors[st]:BR}`,
+              background:t.status===st?`${stColors[st]}22`:'transparent',
+              color:t.status===st?stColors[st]:MU}}>{st}</button>
+        ))}
+      </div>
+    </div>
+  </div>;
+}
+
+function Trends(){
+  const [platform,setPlatform]=useState('');
+  const [region,setRegion]=useState('');
+  const [minViews,setMinViews]=useState(20000);
+  const [view,setView]=useState('recreate');
+  const [d,setD]=useState({lane1:[],lane2:[],audios:[]});
+  const [loading,setLoading]=useState(true);
+  const load=()=>{setLoading(true);api.trends(platform,minViews,region).then(setD).catch(console.error).finally(()=>setLoading(false));};
+  useEffect(load,[platform,minViews,region]);
+  const onStatus=(id,st)=>{api.trendStatus(id,st);setD(p=>({...p,lane1:p.lane1.map(t=>t.id===id?{...t,status:st}:t)}));};
+
+  const PILL=(active)=>({padding:'8px 18px',fontSize:11,fontWeight:700,letterSpacing:'.8px',textTransform:'uppercase',
+    cursor:'pointer',borderRadius:5,border:`1px solid ${active?G:BR}`,background:active?G:'transparent',color:active?BK:MU});
+
+  return <div>
+    {/* filters */}
+    <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap',marginBottom:24}}>
+      <button onClick={()=>setView('recreate')} style={PILL(view==='recreate')}>🔥 Recreate Now ({d.lane1.length})</button>
+      <button onClick={()=>setView('watchlist')} style={PILL(view==='watchlist')}>👀 Watchlist ({d.lane2.length})</button>
+      <div style={{flex:1}}/>
+      <select value={region} onChange={e=>setRegion(e.target.value)}
+        style={{background:S2,color:TX,border:`1px solid ${BR}`,borderRadius:4,padding:'7px 10px',fontSize:12}}>
+        <option value="">All regions</option><option value="MENA">MENA</option><option value="LATAM">LATAM</option><option value="INDOPAC">INDOPAC</option>
+      </select>
+      <select value={platform} onChange={e=>setPlatform(e.target.value)}
+        style={{background:S2,color:TX,border:`1px solid ${BR}`,borderRadius:4,padding:'7px 10px',fontSize:12}}>
+        <option value="">All platforms</option><option value="tiktok">TikTok</option><option value="instagram">IG Reels</option>
+      </select>
+      <div style={{fontSize:11,color:MU}}>min views: {fmtN(minViews)}
+        <input type="range" min="0" max="500000" step="10000" value={minViews}
+          onChange={e=>setMinViews(+e.target.value)} style={{marginLeft:8,verticalAlign:'middle'}}/></div>
+      <button onClick={load} style={{background:S3,color:G,border:`1px solid ${G}`,borderRadius:4,padding:'7px 16px',fontSize:11,fontWeight:600}}>↻</button>
+    </div>
+
+    {loading && <div style={{color:MU,fontSize:13}}>⟳ Loading trends…</div>}
+
+    {!loading && view==='recreate' && <>
+      <div style={{color:MU,fontSize:12,marginBottom:16}}>{d.lane1.length} proven trends · sorted by velocity (views ÷ hours) · women only</div>
+      {d.lane1.length===0 && <div style={{color:DI,fontSize:14,marginTop:40,textAlign:'center'}}>No trends yet — run the scraper.</div>}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',gap:18}}>
+        {d.lane1.map(t=><TrendCard key={t.id} t={t} onStatus={onStatus}/>)}
+      </div>
+    </>}
+
+    {!loading && view==='watchlist' && <>
+      <div style={{color:MU,fontSize:12,marginBottom:16}}>{d.lane2.length} recent posts from reference accounts · early-warning signal</div>
+      {d.lane2.length===0 && <div style={{color:DI,fontSize:14,marginTop:40,textAlign:'center'}}>No watchlist posts yet — run the scraper.</div>}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',gap:18}}>
+        {d.lane2.map(c=><TrendCard key={c.id} t={{id:c.id,clip:c,velocity:c.velocity,status:c.status||'new'}} onStatus={onStatus}/>)}
+      </div>
+    </>}
+  </div>;
+}
+
 // ── main app ─────────────────────────────────────────────────────────────────
 function App() {
   const [markets, setMarkets]   = useState([]);
@@ -487,104 +669,112 @@ function App() {
   },[market,platform]);
 
   const c=data.creators||[],p=data.posts||[],m=data.media||[],a=data.analysis||[],r=data.runs||[];
+  const tp=data.total_processed||0, tm=data.total_media||m.length, tpo=data.total_posts||p.length;
   const lastRun = r.length > 0 ? r[0] : null;
   const lastStatus = lastRun ? lastRun.status : null;
   const sc = {done:GR,failed:RE,running:AM}[lastStatus] || MU;
 
-  const TABS=[
-    {id:'overview',  label:'Overview'},
-    {id:'creators',  label:'Creators & Images'},
-    {id:'analysis',  label:'AI Analysis'},
-    {id:'pipeline',  label:'Pipeline'},
+  const NAV=[
+    {group:'APPEARANCE', items:[
+      {id:'overview', label:'Overview'},
+      {id:'creators', label:'Creators & Images'},
+      {id:'analysis', label:'AI Analysis'},
+      {id:'pipeline', label:'Pipeline'},
+    ]},
+    {group:'TRENDS', items:[
+      {id:'trends', label:'🔥 Dance Trends'},
+    ]},
   ];
+  const isTrends = tab==='trends';
 
-  return <div style={{minHeight:'100vh',background:BK}}>
-    {/* header */}
-    <div style={{background:`linear-gradient(135deg,${BK} 0%,#161208 60%,${BK} 100%)`,
-      borderBottom:`1px solid ${GD}`,padding:'24px 48px',
-      display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-      <div>
-        <div style={{fontSize:9,fontWeight:700,letterSpacing:'4px',color:G,marginBottom:4}}>COMMUNITY MAPPER</div>
-        <div style={{fontFamily:'Space Grotesk',fontSize:26,fontWeight:700,color:TX}}>Intelligence Dashboard</div>
+  return <div style={{minHeight:'100vh',background:BK,display:'flex'}}>
+    {/* SIDEBAR */}
+    <div style={{width:212,flexShrink:0,background:'#100C06',borderRight:`1px solid ${GD}`,
+      position:'sticky',top:0,height:'100vh',overflowY:'auto',padding:'22px 0'}}>
+      <div style={{padding:'0 20px 20px'}}>
+        <div style={{fontSize:9,fontWeight:700,letterSpacing:'3px',color:G,marginBottom:4}}>COMMUNITY MAPPER</div>
+        <div style={{fontFamily:'Space Grotesk',fontSize:17,fontWeight:700,color:TX}}>Intelligence</div>
       </div>
-      <div style={{display:'flex',gap:24,alignItems:'center'}}>
-        {[
-          [c.length,'CREATORS',G],[p.length,'POSTS',GL],
-          [m.length,'MEDIA',AM],[a.length,'ANALYZED',GR]
-        ].map(([n,l,col])=>(
-          <div key={l} style={{textAlign:'right'}}>
-            <div style={{fontFamily:'Space Grotesk',fontSize:28,fontWeight:700,color:col,lineHeight:1}}>{n.toLocaleString()}</div>
-            <div style={{fontSize:9,fontWeight:700,letterSpacing:'2px',color:DI,textTransform:'uppercase',marginTop:2}}>{l}</div>
-          </div>
-        ))}
-        {lastStatus && <div style={{marginLeft:16,paddingLeft:16,borderLeft:`1px solid ${BR}`}}>
-          <div style={{fontSize:9,color:DI,letterSpacing:'2px'}}>LAST RUN</div>
-          <div style={{fontFamily:'Space Grotesk',fontSize:13,fontWeight:700,color:sc}}>{lastStatus.toUpperCase()}</div>
-        </div>}
-      </div>
-    </div>
-
-    {/* controls */}
-    <div style={{background:S1,borderBottom:`1px solid ${BR}`,padding:'14px 48px',display:'flex',alignItems:'flex-end',gap:16}}>
-      <div>
-        <div style={{fontSize:9,fontWeight:700,letterSpacing:'2px',color:DI,marginBottom:5}}>MARKET</div>
-        <select value={market||''} onChange={e=>setMarket(e.target.value)}
-          style={{background:S2,color:TX,border:`1px solid ${BR}`,borderRadius:4,padding:'8px 12px',
-            fontSize:13,minWidth:200,fontFamily:'Inter',outline:'none'}}>
-          <option value="">Select market…</option>
-          {markets.map(m=><option key={m.value} value={m.value}>{m.label}</option>)}
-        </select>
-      </div>
-      <div>
-        <div style={{fontSize:9,fontWeight:700,letterSpacing:'2px',color:DI,marginBottom:5}}>PLATFORM</div>
-        <select value={platform} onChange={e=>setPlatform(e.target.value)}
-          style={{background:S2,color:TX,border:`1px solid ${BR}`,borderRadius:4,padding:'8px 12px',
-            fontSize:13,minWidth:150,fontFamily:'Inter',outline:'none'}}>
-          <option value="instagram">Instagram</option>
-          <option value="tiktok">TikTok</option>
-        </select>
-      </div>
-      <button onClick={()=>{
-          setLoading(true);setData({});
-          api.data(market,platform).then(setData).finally(()=>setLoading(false));
-        }}
-        style={{background:S3,color:G,border:`1px solid ${G}`,borderRadius:4,
-          padding:'8px 20px',fontSize:12,fontWeight:600,letterSpacing:'1px',marginBottom:0}}>
-        ↻ REFRESH
-      </button>
-    </div>
-
-    {/* tabs */}
-    <div style={{background:S1,borderBottom:`2px solid ${G}`,padding:'0 48px',display:'flex',gap:0}}>
-      {TABS.map(t=>(
-        <button key={t.id} onClick={()=>setTab(t.id)}
-          style={{padding:'12px 28px',fontSize:11,fontWeight:700,letterSpacing:'.8px',
-            textTransform:'uppercase',color:tab===t.id?BK:MU,
-            background:tab===t.id?G:'transparent',
-            border:'none',borderRadius:`4px 4px 0 0`,transition:'all .15s',cursor:'pointer'}}>
-          {t.label}
-        </button>
+      {NAV.map(grp=>(
+        <div key={grp.group} style={{marginTop:14}}>
+          <div style={{fontSize:9,fontWeight:700,letterSpacing:'2px',color:DI,padding:'0 20px 6px'}}>{grp.group}</div>
+          {grp.items.map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)}
+              style={{display:'block',width:'100%',textAlign:'left',padding:'10px 20px',fontSize:13,fontWeight:600,
+                cursor:'pointer',border:'none',borderLeft:`3px solid ${tab===t.id?G:'transparent'}`,
+                background:tab===t.id?`${G}18`:'transparent',color:tab===t.id?G:MU}}>
+              {t.label}
+            </button>
+          ))}
+        </div>
       ))}
     </div>
 
-    {/* content */}
-    <div style={{padding:'36px 48px'}}>
-      {loading && <div style={{color:MU,fontSize:13,marginBottom:24,display:'flex',alignItems:'center',gap:8}}>
-        <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span> Loading data…
+    {/* MAIN */}
+    <div style={{flex:1,minWidth:0}}>
+      {/* header */}
+      <div style={{background:`linear-gradient(135deg,${BK} 0%,#161208 60%,${BK} 100%)`,
+        borderBottom:`1px solid ${GD}`,padding:'20px 36px',
+        display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <div style={{fontFamily:'Space Grotesk',fontSize:22,fontWeight:700,color:TX}}>
+          {isTrends?'🔥 Dance Trends — Recreate Targets':'Intelligence Dashboard'}</div>
+        {!isTrends && <div style={{display:'flex',gap:22,alignItems:'center'}}>
+          {[[c.length,'CREATORS',G],[tpo,'POSTS',GL],[tm,'MEDIA',AM],[tp,'ANALYZED',GR]].map(([n,l,col])=>(
+            <div key={l} style={{textAlign:'right'}}>
+              <div style={{fontFamily:'Space Grotesk',fontSize:26,fontWeight:700,color:col,lineHeight:1}}>{n.toLocaleString()}</div>
+              <div style={{fontSize:9,fontWeight:700,letterSpacing:'2px',color:DI,textTransform:'uppercase',marginTop:2}}>{l}</div>
+            </div>
+          ))}
+          {lastStatus && <div style={{marginLeft:12,paddingLeft:12,borderLeft:`1px solid ${BR}`}}>
+            <div style={{fontSize:9,color:DI,letterSpacing:'2px'}}>LAST RUN</div>
+            <div style={{fontFamily:'Space Grotesk',fontSize:13,fontWeight:700,color:sc}}>{lastStatus.toUpperCase()}</div>
+          </div>}
+        </div>}
+      </div>
+
+      {/* controls (appearance views only) */}
+      {!isTrends && <div style={{background:S1,borderBottom:`1px solid ${BR}`,padding:'12px 36px',display:'flex',alignItems:'flex-end',gap:16}}>
+        <div>
+          <div style={{fontSize:9,fontWeight:700,letterSpacing:'2px',color:DI,marginBottom:5}}>MARKET</div>
+          <select value={market||''} onChange={e=>setMarket(e.target.value)}
+            style={{background:S2,color:TX,border:`1px solid ${BR}`,borderRadius:4,padding:'8px 12px',fontSize:13,minWidth:200,outline:'none'}}>
+            <option value="">Select market…</option>
+            {markets.map(m=><option key={m.value} value={m.value}>{m.label}</option>)}
+          </select>
+        </div>
+        <div>
+          <div style={{fontSize:9,fontWeight:700,letterSpacing:'2px',color:DI,marginBottom:5}}>PLATFORM</div>
+          <select value={platform} onChange={e=>setPlatform(e.target.value)}
+            style={{background:S2,color:TX,border:`1px solid ${BR}`,borderRadius:4,padding:'8px 12px',fontSize:13,minWidth:150,outline:'none'}}>
+            <option value="instagram">Instagram</option>
+            <option value="tiktok">TikTok</option>
+          </select>
+        </div>
+        <button onClick={()=>{setLoading(true);setData({});api.data(market,platform).then(setData).finally(()=>setLoading(false));}}
+          style={{background:S3,color:G,border:`1px solid ${G}`,borderRadius:4,padding:'8px 20px',fontSize:12,fontWeight:600,letterSpacing:'1px'}}>
+          ↻ REFRESH
+        </button>
       </div>}
-      {!market && <div style={{color:DI,fontSize:14,marginTop:80,textAlign:'center'}}>← Select a market to begin</div>}
-      {market && !loading && data.market && <>
-        {tab==='overview'  && <Overview  data={data}/>}
-        {tab==='creators'  && <Creators  data={data}/>}
-        {tab==='analysis'  && <AIAnalysis data={data}/>}
-        {tab==='pipeline'  && <Pipeline  data={data}/>}
-      </>}
+
+      {/* content */}
+      <div style={{padding:'28px 36px'}}>
+        {isTrends ? <Trends/> : <>
+          {loading && <div style={{color:MU,fontSize:13,marginBottom:24,display:'flex',alignItems:'center',gap:8}}>
+            <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span> Loading data…</div>}
+          {!market && <div style={{color:DI,fontSize:14,marginTop:80,textAlign:'center'}}>← Select a market to begin</div>}
+          {market && !loading && data.market && <>
+            {tab==='overview'  && <Overview  data={data}/>}
+            {tab==='creators'  && <Creators  data={data}/>}
+            {tab==='analysis'  && <AIAnalysis data={data}/>}
+            {tab==='pipeline'  && <Pipeline  data={data}/>}
+          </>}
+        </>}
+      </div>
     </div>
 
     <style>{`
       @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
       select option{background:#1A1A1A;color:#F0F0F0}
-      select:focus{border-color:var(--g)!important}
     `}</style>
   </div>;
 }

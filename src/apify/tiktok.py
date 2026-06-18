@@ -107,6 +107,7 @@ def _normalise_profile(i: dict) -> dict:
         "post_count": author.get("video") or stats.get("videoCount"),
         "profile_pic_url": author.get("avatar") or user.get("avatarLarger"),
         "is_verified": bool(author.get("verified") or user.get("verified")),
+        "profile_url": f"https://www.tiktok.com/@{(author.get('name') or user.get('uniqueId') or '').lower().strip()}",
     }
 
 
