@@ -201,6 +201,8 @@ def _save_clip(clip: dict, sound_id: str | None) -> dict | None:
         row["region"] = clip["region"]
     if clip.get("market_code"):
         row["market_code"] = clip["market_code"]
+    if clip.get("topic"):
+        row["topic"] = clip["topic"]
     if video_path:
         row["video_minio_path"] = video_path
     if clip.get("subject_type"):
@@ -271,7 +273,8 @@ def rebuild_trends() -> int:
         clips = []
         for i in range(0, len(sound_ids), 50):
             clips += db.table("clips").select("id,views,velocity,caption,subject_type")\
-                .in_("sound_id", sound_ids[i:i+50]).eq("subject_type", "female").execute().data or []
+                .in_("sound_id", sound_ids[i:i+50]).eq("subject_type", "female")\
+                .is_("topic", "null").execute().data or []   # exclude reference-account clips
         if not clips:   # no women's clips on this sound → not a trend we surface
             continue
         ref = max(clips, key=lambda c: c.get("velocity") or 0)
@@ -289,7 +292,8 @@ def rebuild_trends() -> int:
     # Sound-less female clips (e.g. IG hashtag reels — no audio metadata) surface
     # each as its own single-clip trend so they still appear in the Recreate lane.
     noaudio = db.table("clips").select("id,views,velocity,caption")\
-        .is_("sound_id", "null").eq("subject_type", "female").limit(2000).execute().data or []
+        .is_("sound_id", "null").eq("subject_type", "female")\
+        .is_("topic", "null").limit(2000).execute().data or []   # exclude reference-account clips
     for c in noaudio:
         upsert("trends", {
             "canonical_key": f"clip:{c['id']}",

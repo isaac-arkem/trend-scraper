@@ -57,18 +57,39 @@ def _placeholder():
 # ── trends bucket serve (audio / video) ────────────────────────────────────
 @app.route("/trend-file")
 def trend_file():
+    import re
     path = request.args.get("p", "")
     if not path:
         return _placeholder()
+    from src.storage.minio import get_minio
+    mc = get_minio()
+    bucket = os.environ.get("TRENDS_BUCKET", "trends")
     try:
-        from src.storage.minio import get_minio
-        mc = get_minio()
-        bucket = os.environ.get("TRENDS_BUCKET", "trends")
-        obj = mc.get_object(bucket, path)
-        data = obj.read()
-        ct = obj.headers.get("content-type", "application/octet-stream")
+        st = mc.stat_object(bucket, path)
+        size = st.size
+        ct = st.content_type or "application/octet-stream"
+    except Exception:
+        return _placeholder()
+
+    rng = request.headers.get("Range")
+    try:
+        if rng:
+            # browsers need 206/partial-content to render + seek video
+            m = re.match(r"bytes=(\d+)-(\d*)", rng)
+            start = int(m.group(1))
+            end = int(m.group(2)) if m.group(2) else size - 1
+            end = min(end, size - 1)
+            length = end - start + 1
+            data = mc.get_object(bucket, path, offset=start, length=length).read()
+            resp = Response(data, status=206, content_type=ct)
+            resp.headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+            resp.headers["Accept-Ranges"] = "bytes"
+            resp.headers["Content-Length"] = str(length)
+            return resp
+        data = mc.get_object(bucket, path).read()
         return Response(data, content_type=ct,
-                        headers={"Cache-Control": "public,max-age=86400", "Accept-Ranges": "bytes"})
+                        headers={"Accept-Ranges": "bytes", "Content-Length": str(size),
+                                 "Cache-Control": "public,max-age=86400"})
     except Exception:
         return _placeholder()
 
@@ -224,6 +245,49 @@ def _enrich_clips(clips):
     return clips
 
 
+def _clip_format(c):
+    dur = c.get("duration_sec") or 0
+    if dur and dur <= 20:
+        length = "short"
+    elif dur and dur <= 60:
+        length = "medium"
+    elif dur:
+        length = "long"
+    else:
+        length = "unknown"
+    audio = "audio" if c.get("sound_id") else "no-audio"
+    return f"{length}_{audio}"
+
+
+def _avg(rows, key):
+    vals = [r.get(key) or 0 for r in rows]
+    return round(sum(vals) / len(vals)) if vals else 0
+
+
+def _engagement(c):
+    return (c.get("likes") or 0) + (c.get("comments") or 0) + (c.get("shares") or 0) + (c.get("saves") or 0)
+
+
+def _summarize_group(rows):
+    views = [r.get("views") or 0 for r in rows]
+    fmts = {}
+    platforms = {}
+    for r in rows:
+        fmts[r["format"]] = fmts.get(r["format"], 0) + 1
+        platforms[r.get("platform") or "unknown"] = platforms.get(r.get("platform") or "unknown", 0) + 1
+    top_format = max(fmts.items(), key=lambda x: x[1])[0] if fmts else None
+    return {
+        "clip_count": len(rows),
+        "avg_views": round(sum(views) / len(views)) if views else 0,
+        "total_views": sum(views),
+        "avg_velocity": _avg(rows, "velocity"),
+        "total_engagement": sum(_engagement(r) for r in rows),
+        "top_format": top_format,
+        "formats": fmts,
+        "platforms": platforms,
+    }
+
+
 @app.route("/api/trends")
 def api_trends():
     platform = request.args.get("platform")          # 'tiktok' | 'instagram' | None
@@ -231,7 +295,7 @@ def api_trends():
     min_views = int(request.args.get("min_views", 0))
 
     # Lane 1 — proven trends, velocity-ranked, women only (built from female clips)
-    trends = db.table("trends").select("*").order("velocity", desc=True).limit(300).execute().data or []
+    trends = db.table("trends").select("*").order("velocity", desc=True).limit(2000).execute().data or []
     ref_ids = [t["reference_clip_id"] for t in trends if t.get("reference_clip_id")]
     refs = {}
     for i in range(0, len(ref_ids), 100):
@@ -262,6 +326,77 @@ def api_trends():
 
     audios = db.table("sounds").select("*").order("clip_count", desc=True).limit(50).execute().data or []
     return jsonify({"lane1": lane1, "lane2": lane2, "audios": audios})
+
+
+@app.route("/api/reference")
+def api_reference():
+    """Reference influencers grouped by topic x region, with per-account stats
+    (traction, appearance) + top clips. Powers the niche-library page."""
+    accts = db.table("reference_accounts").select("*").execute().data or []
+
+    # all reference clips (topic-tagged), grouped by (platform, handle)
+    clips, start = [], 0
+    while True:
+        page = db.table("clips").select("id,platform,creator_handle,views,likes,comments,shares,saves,"
+                                        "velocity,duration_sec,video_url,video_minio_path,caption,"
+                                        "sound_id,topic,region,posted_at")\
+            .not_.is_("topic", "null").order("id").range(start, start + 999).execute().data or []
+        clips += page
+        if len(page) < 1000:
+            break
+        start += 1000
+
+    by_handle = {}
+    for c in clips:
+        c["format"] = _clip_format(c)
+        by_handle.setdefault((c["platform"], (c["creator_handle"] or "").lower()), []).append(c)
+    _enrich_clips(clips)
+
+    out = []
+    for a in accts:
+        cl = sorted(by_handle.get((a["platform"], a["handle"].lower()), []),
+                    key=lambda c: c.get("velocity") or 0, reverse=True)
+        views = [c.get("views") or 0 for c in cl]
+        a["clip_count"] = len(cl)
+        a["avg_views"] = round(sum(views) / len(views)) if views else 0
+        a["avg_velocity"] = round(sum(c.get("velocity") or 0 for c in cl) / len(cl)) if cl else 0
+        a["total_views"] = sum(views)
+        a["total_engagement"] = sum(_engagement(c) for c in cl)
+        a["top_format"] = _summarize_group(cl)["top_format"] if cl else None
+        a["clips"] = cl[:6]
+        out.append(a)
+
+    by_topic, by_region, matrix, by_format = {}, {}, {}, {}
+    for c in clips:
+        topic = c.get("topic") or "unknown"
+        region = c.get("region") or "unknown"
+        by_topic.setdefault(topic, []).append(c)
+        by_region.setdefault(region, []).append(c)
+        matrix.setdefault(topic, {}).setdefault(region, []).append(c)
+        by_format.setdefault(c["format"], []).append(c)
+
+    topic_summary = [{"topic": k, **_summarize_group(v)} for k, v in by_topic.items()]
+    region_summary = [{"region": k, **_summarize_group(v)} for k, v in by_region.items()]
+    format_summary = [{"format": k, **_summarize_group(v)} for k, v in by_format.items()]
+    matrix_summary = {
+        topic: {region: _summarize_group(rows) for region, rows in regions.items()}
+        for topic, regions in matrix.items()
+    }
+
+    return jsonify({
+        "accounts": out,
+        "topics": sorted(topic_summary, key=lambda x: x["avg_views"], reverse=True),
+        "regions": sorted(region_summary, key=lambda x: x["avg_views"], reverse=True),
+        "formats": sorted(format_summary, key=lambda x: x["clip_count"], reverse=True),
+        "matrix": matrix_summary,
+        "totals": {
+            "accounts": len(out),
+            "scraped_accounts": len([a for a in out if a.get("scraped_at")]),
+            "clips": len(clips),
+            "topics": len(by_topic),
+            "regions": len(by_region),
+        },
+    })
 
 
 @app.route("/api/trend-status", methods=["POST"])

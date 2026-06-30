@@ -71,6 +71,7 @@ const api = {
   markets: () => fetch('/api/markets').then(r=>r.json()),
   data: (m,p) => fetch(`/api/data?market=${m}&platform=${p}`).then(r=>r.json()),
   trends: (platform,minViews,region) => fetch(`/api/trends?platform=${platform||''}&min_views=${minViews||0}&region=${region||''}`).then(r=>r.json()),
+  reference: () => fetch('/api/reference').then(r=>r.json()),
   trendStatus: (id,status) => fetch('/api/trend-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,status})}).then(r=>r.json()),
 };
 const TREND_FILE = (p) => p ? `/trend-file?p=${encodeURIComponent(p)}` : '';
@@ -532,10 +533,28 @@ function PlatBadge({p}){
     {tt?'TIKTOK':'REEL'}</span>;
 }
 
+function embedUrl(clip){
+  if(clip.platform==='tiktok'){
+    const m=(clip.video_url||'').match(/video\/(\d+)/);
+    return m ? `https://www.tiktok.com/embed/v2/${m[1]}` : null;
+  }
+  if(clip.platform==='instagram'){
+    const u=(clip.video_url||'').replace(/\/+$/,'');
+    return u ? u+'/embed' : null;
+  }
+  return null;
+}
+
 function ClipVideo({clip,height=300}){
   const src = clip.video_minio_path ? TREND_FILE(clip.video_minio_path) : null;
-  if(src) return <video src={src} controls loop playsInline preload="metadata"
+  // 1) self-hosted video → stream it (first frame shown via #t=0.1)
+  if(src) return <video src={src+'#t=0.1'} controls loop playsInline preload="metadata"
     style={{width:'100%',height,objectFit:'cover',background:'#000',borderRadius:6,display:'block'}}/>;
+  // 2) no downloaded file → embed the real TikTok/IG player inline so it still plays on-page
+  const emb = embedUrl(clip);
+  if(emb) return <iframe src={emb} style={{width:'100%',height,border:'none',borderRadius:6,background:'#000',display:'block'}}
+    allow="autoplay; encrypted-media; fullscreen" allowFullScreen loading="lazy"/>;
+  // 3) last resort
   return <a href={clip.video_url} target="_blank" style={{display:'flex',height,alignItems:'center',justifyContent:'center',
     background:S3,borderRadius:6,color:G,fontSize:12,textDecoration:'none'}}>▶ Open on {clip.platform}</a>;
 }
@@ -598,10 +617,12 @@ function Trends(){
   const [region,setRegion]=useState('');
   const [minViews,setMinViews]=useState(20000);
   const [view,setView]=useState('recreate');
+  const [shown,setShown]=useState(24);
   const [d,setD]=useState({lane1:[],lane2:[],audios:[]});
   const [loading,setLoading]=useState(true);
   const load=()=>{setLoading(true);api.trends(platform,minViews,region).then(setD).catch(console.error).finally(()=>setLoading(false));};
   useEffect(load,[platform,minViews,region]);
+  useEffect(()=>setShown(24),[platform,minViews,region,view]);  // reset page on filter/lane change
   const onStatus=(id,st)=>{api.trendStatus(id,st);setD(p=>({...p,lane1:p.lane1.map(t=>t.id===id?{...t,status:st}:t)}));};
 
   const PILL=(active)=>({padding:'8px 18px',fontSize:11,fontWeight:700,letterSpacing:'.8px',textTransform:'uppercase',
@@ -633,8 +654,13 @@ function Trends(){
       <div style={{color:MU,fontSize:12,marginBottom:16}}>{d.lane1.length} proven trends · sorted by velocity (views ÷ hours) · women only</div>
       {d.lane1.length===0 && <div style={{color:DI,fontSize:14,marginTop:40,textAlign:'center'}}>No trends yet — run the scraper.</div>}
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',gap:18}}>
-        {d.lane1.map(t=><TrendCard key={t.id} t={t} onStatus={onStatus}/>)}
+        {d.lane1.slice(0,shown).map(t=><TrendCard key={t.id} t={t} onStatus={onStatus}/>)}
       </div>
+      {shown<d.lane1.length && <div style={{textAlign:'center',marginTop:24}}>
+        <button onClick={()=>setShown(s=>s+24)} style={{background:S3,color:G,border:`1px solid ${G}`,
+          borderRadius:5,padding:'10px 28px',fontSize:12,fontWeight:700,letterSpacing:'1px',cursor:'pointer'}}>
+          LOAD MORE ({d.lane1.length-shown} left)</button>
+      </div>}
     </>}
 
     {!loading && view==='watchlist' && <>
@@ -645,6 +671,220 @@ function Trends(){
       </div>
     </>}
   </div>;
+}
+
+// ── REFERENCE PROFILES ──────────────────────────────────────────────────────
+function fmtFormat(f){
+  const m={
+    short_audio:'Short + audio', medium_audio:'Medium + audio', long_audio:'Long + audio',
+    'short_no-audio':'Short no audio', 'medium_no-audio':'Medium no audio', 'long_no-audio':'Long no audio',
+    unknown_audio:'Audio, unknown length', 'unknown_no-audio':'No audio, unknown length'
+  };
+  return m[f] || (f||'unknown').replace(/_/g,' ');
+}
+
+function ReferenceProfiles(){
+  const [d,setD]=useState({accounts:[],topics:[],regions:[],formats:[],matrix:{},totals:{}});
+  const [loading,setLoading]=useState(true);
+  const [error,setError]=useState('');
+  const [topic,setTopic]=useState('');
+  const [region,setRegion]=useState('');
+  const [platform,setPlatform]=useState('');
+  const [query,setQuery]=useState('');
+  const [sort,setSort]=useState('avg_views');
+  const load=()=>{
+    setLoading(true);
+    setError('');
+    fetch('/api/reference')
+      .then(async r=>{
+        if(!r.ok) throw new Error((await r.text()).slice(0,180) || `HTTP ${r.status}`);
+        return r.json();
+      })
+      .then(setD)
+      .catch(e=>{console.error(e);setError(e.message||'Reference API failed');})
+      .finally(()=>setLoading(false));
+  };
+  useEffect(load,[]);
+
+  const accounts=(d.accounts||[]).filter(a=>
+    (!topic || a.topic===topic) &&
+    (!region || a.region===region) &&
+    (!platform || a.platform===platform) &&
+    (!query || (a.handle||'').toLowerCase().includes(query.toLowerCase()))
+  ).sort((a,b)=>(b[sort]||0)-(a[sort]||0));
+  const clips = accounts.reduce((n,a)=>n+(a.clip_count||0),0);
+  const avgViews = accounts.length ? Math.round(accounts.reduce((s,a)=>s+(a.avg_views||0),0)/accounts.length) : 0;
+  const topics=[...new Set((d.accounts||[]).map(a=>a.topic).filter(Boolean))].sort();
+  const regions=[...new Set((d.accounts||[]).map(a=>a.region).filter(Boolean))].sort();
+
+  const filteredClips = [];
+  accounts.forEach(a=>(a.clips||[]).forEach(c=>filteredClips.push({...c, account:a})));
+  const topClips = filteredClips.sort((a,b)=>(b.views||0)-(a.views||0)).slice(0,12);
+
+  const PILL=(active)=>({padding:'7px 12px',fontSize:11,fontWeight:700,letterSpacing:'.6px',
+    cursor:'pointer',borderRadius:5,border:`1px solid ${active?G:BR}`,background:active?G:S2,color:active?BK:MU});
+
+  return <div>
+    <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap',marginBottom:22}}>
+      <select value={topic} onChange={e=>setTopic(e.target.value)}
+        style={{background:S2,color:TX,border:`1px solid ${BR}`,borderRadius:4,padding:'8px 10px',fontSize:12}}>
+        <option value="">All niches</option>{topics.map(t=><option key={t} value={t}>{t.replace(/_/g,' ')}</option>)}
+      </select>
+      <select value={region} onChange={e=>setRegion(e.target.value)}
+        style={{background:S2,color:TX,border:`1px solid ${BR}`,borderRadius:4,padding:'8px 10px',fontSize:12}}>
+        <option value="">All regions</option>{regions.map(r=><option key={r} value={r}>{r}</option>)}
+      </select>
+      <button onClick={()=>setPlatform('')} style={PILL(platform==='')}>All platforms</button>
+      <button onClick={()=>setPlatform('tiktok')} style={PILL(platform==='tiktok')}>TikTok</button>
+      <button onClick={()=>setPlatform('instagram')} style={PILL(platform==='instagram')}>Instagram</button>
+      <div style={{flex:1}}/>
+      <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="search handle"
+        style={{background:S2,color:TX,border:`1px solid ${BR}`,borderRadius:4,padding:'8px 10px',fontSize:12,width:160}}/>
+      <select value={sort} onChange={e=>setSort(e.target.value)}
+        style={{background:S2,color:TX,border:`1px solid ${BR}`,borderRadius:4,padding:'8px 10px',fontSize:12}}>
+        <option value="avg_views">Sort avg views</option>
+        <option value="avg_velocity">Sort velocity</option>
+        <option value="clip_count">Sort clips</option>
+        <option value="total_engagement">Sort engagement</option>
+      </select>
+      <button onClick={load} style={{background:S3,color:G,border:`1px solid ${G}`,borderRadius:4,padding:'8px 14px',fontSize:11,fontWeight:700}}>REFRESH</button>
+    </div>
+
+    {loading && <div style={{color:MU,fontSize:13,margin:'24px 0'}}>⟳ Loading reference profiles…</div>}
+    {error && <div style={{background:'#3A1515',border:`1px solid ${RE}`,color:'#FFB4B4',
+      borderRadius:6,padding:'12px 14px',fontSize:12,marginBottom:18}}>
+      Reference API error: {error}
+    </div>}
+    {!loading && <>
+      <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:22}}>
+        <Metric label="accounts" value={accounts.length} color={G}/>
+        <Metric label="scraped" value={(d.totals.scraped_accounts||0)+'/'+(d.totals.accounts||0)} color={GR}/>
+        <Metric label="clips" value={fmtN(clips)} color={AM}/>
+        <Metric label="avg views" value={fmtN(avgViews)} color={BL}/>
+      </div>
+
+      <Section title="NICHE × REGION TRACTION"/>
+      <ReferenceMatrix matrix={d.matrix||{}} topics={topics} regions={regions}/>
+
+      <div style={{display:'flex',gap:12,flexWrap:'wrap',marginBottom:8}}>
+        <BarChart title="REGIONS BY AVG VIEWS" items={(d.regions||[]).map(r=>[r.region, r.avg_views])} colors={[G,BL,AM,GR,'#CE93D8']}/>
+        <BarChart title="NICHES BY AVG VIEWS" items={(d.topics||[]).map(t=>[(t.topic||'').replace(/_/g,' '), t.avg_views])} colors={[BL,G,GR,AM,'#CE93D8']}/>
+        <BarChart title="FORMAT USED MORE" items={(d.formats||[]).map(f=>[fmtFormat(f.format), f.clip_count])} colors={[G,GL,BL,AM,GR,'#CE93D8']}/>
+      </div>
+
+      <Section title="TOP CLIPS IN CURRENT FILTER"/>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(220px,1fr))',gap:12,marginBottom:18}}>
+        {topClips.map(c=><ReferenceClip key={c.id} c={c}/>)}
+      </div>
+
+      <Section title="REFERENCE ACCOUNTS"/>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(330px,1fr))',gap:14}}>
+        {accounts.map(a=><ReferenceAccount key={`${a.platform}-${a.handle}`} a={a}/>)}
+      </div>
+      {accounts.length===0 && <div style={{color:DI,fontSize:14,textAlign:'center',marginTop:40}}>No accounts match these filters.</div>}
+    </>}
+  </div>;
+}
+
+function ReferenceMatrix({matrix,topics,regions}){
+  return <div style={{overflowX:'auto',background:S1,border:`1px solid ${BR}`,borderRadius:6,marginBottom:18}}>
+    <table style={{width:'100%',borderCollapse:'collapse',minWidth:680}}>
+      <thead><tr>
+        <th style={{textAlign:'left',padding:'10px 12px',fontSize:10,color:DI,letterSpacing:'1.5px'}}>NICHE</th>
+        {regions.map(r=><th key={r} style={{textAlign:'right',padding:'10px 12px',fontSize:10,color:DI,letterSpacing:'1.5px'}}>{r}</th>)}
+      </tr></thead>
+      <tbody>{topics.map(t=><tr key={t} style={{borderTop:`1px solid ${BR}`}}>
+        <td style={{padding:'11px 12px',fontSize:12,fontWeight:700,color:TX,textTransform:'capitalize'}}>{t.replace(/_/g,' ')}</td>
+        {regions.map(r=>{
+          const cell=(matrix[t]||{})[r];
+          return <td key={r} style={{padding:'9px 12px',textAlign:'right'}}>
+            {cell ? <div>
+              <div style={{fontFamily:'Space Grotesk',fontSize:16,fontWeight:700,color:G}}>{fmtN(cell.avg_views)}</div>
+              <div style={{fontSize:10,color:MU}}>{fmtN(cell.clip_count)} clips · {fmtFormat(cell.top_format)}</div>
+            </div> : <span style={{color:DI,fontSize:12}}>—</span>}
+          </td>;
+        })}
+      </tr>)}</tbody>
+    </table>
+  </div>;
+}
+
+function ReferenceAccount({a}){
+  const app=(a.appearance||{}), dom=app.dominant||{};
+  const url=a.platform==='tiktok' ? `https://www.tiktok.com/@${a.handle}` : `https://instagram.com/${a.handle}`;
+  return <div style={{background:S1,border:`1px solid ${BR}`,borderRadius:7,overflow:'hidden',borderLeft:`3px solid ${G}`}}>
+    <div style={{padding:'14px 16px',borderBottom:`1px solid ${BR}`,display:'flex',justifyContent:'space-between',gap:12}}>
+      <div>
+        <a href={url} target="_blank" style={{fontFamily:'Space Grotesk',fontSize:16,fontWeight:700,color:TX}}>@{a.handle}</a>
+        <div style={{display:'flex',gap:4,flexWrap:'wrap',marginTop:5}}>
+          <PlatBadge p={a.platform}/><Tag label={(a.topic||'').replace(/_/g,' ')} color={BL}/><Tag label={a.region||'—'} color={AM}/>
+        </div>
+      </div>
+      <div style={{textAlign:'right'}}>
+        <div style={{fontFamily:'Space Grotesk',fontSize:20,fontWeight:700,color:G,lineHeight:1}}>{fmtN(a.avg_views)}</div>
+        <div style={{fontSize:9,color:DI,letterSpacing:'1px'}}>AVG VIEWS</div>
+      </div>
+    </div>
+    <div style={{padding:'10px 16px',borderBottom:`1px solid ${BR}`,display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
+      <MiniStat label="clips" value={a.clip_count||0}/>
+      <MiniStat label="velocity" value={fmtN(a.avg_velocity||0)}/>
+      <MiniStat label="engage" value={fmtN(a.total_engagement||0)}/>
+      <MiniStat label="format" value={a.top_format?fmtFormat(a.top_format).replace(' + ','\n'):'—'}/>
+    </div>
+    <div style={{padding:'10px 14px',borderBottom:`1px solid ${BR}`}}>
+      <div style={{display:'flex',flexWrap:'wrap',gap:0}}>
+        {dom.skin_tone && <Tag label={dom.skin_tone} color={SKIN_BG[dom.skin_tone]||G} bg={(SKIN_BG[dom.skin_tone]||G)+"22"}/>}
+        {dom.hair_color && <Tag label={dom.hair_color+" hair"} color={AM}/>}
+        {dom.body_frame && <Tag label={dom.body_frame} color={BL}/>}
+        {dom.makeup_style && <Tag label={dom.makeup_style.replace('_',' ')} color="#CE93D8"/>}
+        {(app.fashion_style||[]).slice(0,2).map(x=><Tag key={x} label={x} color={G}/>)}
+        {!app.analyzed && <span style={{fontSize:11,color:DI}}>appearance pending</span>}
+      </div>
+    </div>
+    <div style={{padding:'8px 12px 12px'}}>
+      {(a.clips||[]).slice(0,4).map(c=><ReferenceClipRow key={c.id} c={c}/>)}
+      {(a.clips||[]).length===0 && <div style={{fontSize:11,color:DI,padding:'8px 2px'}}>content pending</div>}
+    </div>
+  </div>;
+}
+
+function MiniStat({label,value}){
+  return <div style={{minWidth:0}}>
+    <div style={{fontFamily:'Space Grotesk',fontSize:14,fontWeight:700,color:TX,whiteSpace:'pre-line',lineHeight:1.1,overflowWrap:'anywhere'}}>{value}</div>
+    <div style={{fontSize:8,color:DI,letterSpacing:'1px',textTransform:'uppercase',marginTop:3}}>{label}</div>
+  </div>;
+}
+
+function ReferenceClip({c,compact=false}){
+  return <div style={{background:S2,border:`1px solid ${BR}`,borderRadius:6,overflow:'hidden'}}>
+    <ClipVideo clip={c} height={compact?145:260}/>
+    {!compact && <div style={{padding:'9px 10px'}}>
+      <div style={{display:'flex',justifyContent:'space-between',gap:8,alignItems:'baseline'}}>
+        <a href={c.video_url} target="_blank" style={{fontSize:12,fontWeight:700,color:TX}}>@{(c.account||{}).handle||c.creator_handle}</a>
+        <span style={{fontFamily:'Space Grotesk',fontSize:15,fontWeight:700,color:G}}>{fmtN(c.views)}</span>
+      </div>
+      <div style={{fontSize:10,color:MU,marginTop:4,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+        {fmtFormat(c.format)} · {ageStr(c.posted_at)}
+      </div>
+      <div style={{fontSize:10,color:DI,marginTop:6,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+        {(c.caption||'').slice(0,100)||'—'}
+      </div>
+    </div>}
+  </div>;
+}
+
+function ReferenceClipRow({c}){
+  return <a href={c.video_url} target="_blank" style={{display:'grid',gridTemplateColumns:'70px 1fr 74px',gap:10,
+    alignItems:'center',padding:'8px 2px',borderBottom:`1px solid ${BR}`}}>
+    <div style={{fontFamily:'Space Grotesk',fontSize:15,fontWeight:700,color:G}}>{fmtN(c.views)}</div>
+    <div style={{minWidth:0}}>
+      <div style={{fontSize:11,color:TX,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+        {(c.caption||'open clip').slice(0,90)}
+      </div>
+      <div style={{fontSize:9,color:DI,marginTop:2}}>{fmtFormat(c.format)} · {ageStr(c.posted_at)}</div>
+    </div>
+    <div style={{fontSize:10,color:MU,textAlign:'right'}}>open ↗</div>
+  </a>;
 }
 
 // ── main app ─────────────────────────────────────────────────────────────────
@@ -683,9 +923,11 @@ function App() {
     ]},
     {group:'TRENDS', items:[
       {id:'trends', label:'🔥 Dance Trends'},
+      {id:'reference', label:'Reference Profiles'},
     ]},
   ];
   const isTrends = tab==='trends';
+  const isReference = tab==='reference';
 
   return <div style={{minHeight:'100vh',background:BK,display:'flex'}}>
     {/* SIDEBAR */}
@@ -716,9 +958,9 @@ function App() {
       <div style={{background:`linear-gradient(135deg,${BK} 0%,#161208 60%,${BK} 100%)`,
         borderBottom:`1px solid ${GD}`,padding:'20px 36px',
         display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-        <div style={{fontFamily:'Space Grotesk',fontSize:22,fontWeight:700,color:TX}}>
-          {isTrends?'🔥 Dance Trends — Recreate Targets':'Intelligence Dashboard'}</div>
-        {!isTrends && <div style={{display:'flex',gap:22,alignItems:'center'}}>
+      <div style={{fontFamily:'Space Grotesk',fontSize:22,fontWeight:700,color:TX}}>
+          {isTrends?'🔥 Dance Trends — Recreate Targets':isReference?'Reference Profiles — Niche & Region Mapper':'Intelligence Dashboard'}</div>
+        {!isTrends && !isReference && <div style={{display:'flex',gap:22,alignItems:'center'}}>
           {[[c.length,'CREATORS',G],[tpo,'POSTS',GL],[tm,'MEDIA',AM],[tp,'ANALYZED',GR]].map(([n,l,col])=>(
             <div key={l} style={{textAlign:'right'}}>
               <div style={{fontFamily:'Space Grotesk',fontSize:26,fontWeight:700,color:col,lineHeight:1}}>{n.toLocaleString()}</div>
@@ -733,7 +975,7 @@ function App() {
       </div>
 
       {/* controls (appearance views only) */}
-      {!isTrends && <div style={{background:S1,borderBottom:`1px solid ${BR}`,padding:'12px 36px',display:'flex',alignItems:'flex-end',gap:16}}>
+      {!isTrends && !isReference && <div style={{background:S1,borderBottom:`1px solid ${BR}`,padding:'12px 36px',display:'flex',alignItems:'flex-end',gap:16}}>
         <div>
           <div style={{fontSize:9,fontWeight:700,letterSpacing:'2px',color:DI,marginBottom:5}}>MARKET</div>
           <select value={market||''} onChange={e=>setMarket(e.target.value)}
@@ -758,7 +1000,7 @@ function App() {
 
       {/* content */}
       <div style={{padding:'28px 36px'}}>
-        {isTrends ? <Trends/> : <>
+        {isTrends ? <Trends/> : isReference ? <ReferenceProfiles/> : <>
           {loading && <div style={{color:MU,fontSize:13,marginBottom:24,display:'flex',alignItems:'center',gap:8}}>
             <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span> Loading data…</div>}
           {!market && <div style={{color:DI,fontSize:14,marginTop:80,textAlign:'center'}}>← Select a market to begin</div>}
