@@ -36,33 +36,43 @@ pipeline {
 
         stage('Run scraper') {
             steps {
-                script {
-                    if (params.SCRAPER_TYPE == 'dance_trends') {
-                        withEnv([
-                            "REQUEST_ID=${params.REQUEST_ID}",
-                            "MARKETS=${params.MARKETS}",
-                            "FEEDS=${params.FEEDS}",
-                            "TAGS=${params.TAGS}",
-                            "MIN_VIEWS=${params.MIN_VIEWS}",
-                            "RECENCY_DAYS=${params.RECENCY_DAYS}",
-                        ]) {
-                            sh '.venv/bin/python scrape_trends.py'
+                withCredentials([
+                    string(credentialsId: 'supabase-url',        variable: 'SUPABASE_URL'),
+                    string(credentialsId: 'supabase-secret-key', variable: 'SUPABASE_SECRET_KEY'),
+                    string(credentialsId: 'apify-token',         variable: 'APIFY_TOKEN'),
+                    string(credentialsId: 'openai-api-key',      variable: 'OPENAI_API_KEY'),
+                    string(credentialsId: 'minio-endpoint',      variable: 'MINIO_ENDPOINT'),
+                    string(credentialsId: 'minio-access-key',    variable: 'MINIO_ACCESS_KEY'),
+                    string(credentialsId: 'minio-secret-key',    variable: 'MINIO_SECRET_KEY'),
+                ]) {
+                    script {
+                        if (params.SCRAPER_TYPE == 'dance_trends') {
+                            withEnv([
+                                "REQUEST_ID=${params.REQUEST_ID}",
+                                "MARKETS=${params.MARKETS}",
+                                "FEEDS=${params.FEEDS}",
+                                "TAGS=${params.TAGS}",
+                                "MIN_VIEWS=${params.MIN_VIEWS}",
+                                "RECENCY_DAYS=${params.RECENCY_DAYS}",
+                            ]) {
+                                sh '.venv/bin/python scrape_trends.py'
+                            }
+                        } else if (params.SCRAPER_TYPE == 'reference_profiles') {
+                            withEnv([
+                                "REQUEST_ID=${params.REQUEST_ID}",
+                                "HANDLES=${params.HANDLES}",
+                            ]) {
+                                sh '''
+                                    if [ -n "$HANDLES" ]; then
+                                        .venv/bin/python scrape_reference_accounts.py --handles "$HANDLES"
+                                    else
+                                        .venv/bin/python scrape_reference_accounts.py
+                                    fi
+                                '''
+                            }
+                        } else {
+                            error("Unknown SCRAPER_TYPE: ${params.SCRAPER_TYPE}")
                         }
-                    } else if (params.SCRAPER_TYPE == 'reference_profiles') {
-                        withEnv([
-                            "REQUEST_ID=${params.REQUEST_ID}",
-                            "HANDLES=${params.HANDLES}",
-                        ]) {
-                            sh '''
-                                if [ -n "$HANDLES" ]; then
-                                    .venv/bin/python scrape_reference_accounts.py --handles "$HANDLES"
-                                else
-                                    .venv/bin/python scrape_reference_accounts.py
-                                fi
-                            '''
-                        }
-                    } else {
-                        error("Unknown SCRAPER_TYPE: ${params.SCRAPER_TYPE}")
                     }
                 }
             }
