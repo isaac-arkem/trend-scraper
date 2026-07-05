@@ -7,9 +7,11 @@ Scrape the curated reference influencers (reference_accounts table):
   • appearance → gpt-4o vision on cover frames → aggregated look per account
                  (skin/hair/body/makeup + %female), saved to reference_accounts.appearance
 
-Run:  .venv/bin/python scrape_reference_accounts.py                  (all)
-      .venv/bin/python scrape_reference_accounts.py --topic adhd_wellness
-      .venv/bin/python scrape_reference_accounts.py --limit 3        (test)
+Run:  .venv/bin/python scrape_reference_accounts.py                              (all active)
+      .venv/bin/python scrape_reference_accounts.py --handles alice,bob,carol     (specific)
+
+Jenkins env vars (optional):
+  REQUEST_ID  — uuid of the reference_scrape_requests row to update with status
 """
 import sys
 import time
@@ -71,24 +73,38 @@ def aggregate_appearance(cover_urls):
     }
 
 
+def set_request_status(db, request_id, status, error_message=None):
+    if not request_id:
+        return
+    update = {"status": status}
+    if error_message:
+        update["error_message"] = error_message[:500]
+    if status in ("success", "failed"):
+        update["completed_at"] = datetime.now(timezone.utc).isoformat()
+    db.table("reference_scrape_requests").update(update).eq("id", request_id).execute()
+
+
 def main():
+    import os
     args = sys.argv[1:]
-    topic = args[args.index("--topic") + 1] if "--topic" in args else None
-    limit = int(args[args.index("--limit") + 1]) if "--limit" in args else None
+    handles = [h.strip() for h in args[args.index("--handles") + 1].split(",")] if "--handles" in args else None
+    request_id = os.environ.get("REQUEST_ID")
 
     db = get_db()
+
+    set_request_status(db, request_id, "running")
+
     q = db.table("reference_accounts").select("*").eq("active", True)
-    if topic:
-        q = q.eq("topic", topic)
+    if handles:
+        q = q.in_("handle", handles)
     accts = q.order("id").execute().data or []
-    if limit:
-        accts = accts[:limit]
-    log(f"scraping {len(accts)} reference accounts" + (f" (topic={topic})" if topic else ""))
+    log(f"scraping {len(accts)} reference accounts" + (f" (handles={','.join(handles)})" if handles else " (all active)"))
 
     t0 = time.time()
     done = 0
     appearance_on = True   # flips off if OpenAI quota runs out (content+voice still scrape)
-    for a in accts:
+    try:
+      for a in accts:
         handle, plat = a["handle"], a["platform"]
         try:
             if plat == "tiktok":
@@ -124,7 +140,14 @@ def main():
         log(f"  ✓ {a['topic']}/{a['region']} @{handle} ({plat}): {len(clips)} clips | "
             f"look={dom.get('hair_color')},{dom.get('skin_tone')} | {done}/{len(accts)} | {(time.time()-t0)/60:.1f}m")
 
-    log(f"DONE — {done}/{len(accts)} reference accounts scraped in {(time.time()-t0)/60:.1f}m")
+      log(f"DONE — {done}/{len(accts)} reference accounts scraped in {(time.time()-t0)/60:.1f}m")
+      set_request_status(db, request_id, "success")
+
+    except Exception as e:
+        msg = str(e)
+        log(f"FATAL — {msg}")
+        set_request_status(db, request_id, "failed", error_message=msg)
+        raise
 
 
 if __name__ == "__main__":
