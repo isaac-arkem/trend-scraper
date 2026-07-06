@@ -86,5 +86,25 @@ pipeline {
         success {
             echo "Scraper job completed: ${params.SCRAPER_TYPE} (REQUEST_ID=${params.REQUEST_ID})"
         }
+        aborted {
+            withCredentials([
+                string(credentialsId: 'supabase-url',        variable: 'SUPABASE_URL'),
+                string(credentialsId: 'supabase-secret-key', variable: 'SUPABASE_SECRET_KEY'),
+            ]) {
+                sh '''
+                    if [ -n "$REQUEST_ID" ]; then
+                        TABLE="dance_scrape_requests"
+                        if [ "$SCRAPER_TYPE" = "reference_profiles" ]; then
+                            TABLE="reference_scrape_requests"
+                        fi
+                        curl -s -X PATCH "$SUPABASE_URL/rest/v1/$TABLE?id=eq.$REQUEST_ID" \
+                            -H "apikey: $SUPABASE_SECRET_KEY" \
+                            -H "Authorization: Bearer $SUPABASE_SECRET_KEY" \
+                            -H "Content-Type: application/json" \
+                            -d "{\"status\":\"failed\",\"error_message\":\"Aborted by user\"}" || true
+                    fi
+                '''
+            }
+        }
     }
 }
