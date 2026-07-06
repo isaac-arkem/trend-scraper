@@ -1,3 +1,4 @@
+from typing import Union, Optional
 import os
 import time
 from apify_client import ApifyClient
@@ -7,7 +8,7 @@ from src.utils.logger import get_logger
 load_dotenv()
 log = get_logger(__name__)
 
-_client: ApifyClient | None = None
+_client: Optional[ApifyClient] = None
 
 
 def get_apify() -> ApifyClient:

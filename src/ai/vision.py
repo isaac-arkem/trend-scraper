@@ -1,3 +1,4 @@
+from typing import Union, Optional
 import os
 import json
 import time
@@ -55,7 +56,7 @@ def _create_with_retry(**kwargs):
             delay = min(delay * 2, 30)
 
 
-def analyze_image_url(image_url: str) -> dict | None:
+def analyze_image_url(image_url: str) -> Optional[dict]:
     """Analyze an image from a public URL using GPT-4o Vision."""
     try:
         resp = get_openai().chat.completions.create(
@@ -128,7 +129,7 @@ def _compress_image(image_bytes: bytes, max_kb: int = 800) -> tuple[bytes, str]:
         return image_bytes, "image/jpeg"
 
 
-def analyze_image_bytes(image_bytes: bytes, mime: str = "image/jpeg") -> dict | None:
+def analyze_image_bytes(image_bytes: bytes, mime: str = "image/jpeg") -> Optional[dict]:
     """Analyze an image from raw bytes. Retries with smaller size on 431."""
     for max_kb in [800, 400, 200]:
         try:
@@ -164,7 +165,7 @@ def analyze_image_bytes(image_bytes: bytes, mime: str = "image/jpeg") -> dict | 
     return None
 
 
-def _parse_json(raw: str) -> dict | None:
+def _parse_json(raw: str) -> Optional[dict]:
     try:
         if raw.startswith("```"):
             raw = raw.split("```")[1]

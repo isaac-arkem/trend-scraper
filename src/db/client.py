@@ -1,5 +1,6 @@
 import os
 import threading
+from typing import Union
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
@@ -21,7 +22,7 @@ def get_db() -> Client:
     return client
 
 
-def upsert(table: str, data: dict | list, on_conflict: str = None) -> list:
+def upsert(table: str, data: Union[dict, list], on_conflict: str = None) -> list:
     db = get_db()
     kwargs = {}
     if on_conflict:
@@ -30,7 +31,7 @@ def upsert(table: str, data: dict | list, on_conflict: str = None) -> list:
     return res.data
 
 
-def insert(table: str, data: dict | list) -> list:
+def insert(table: str, data: Union[dict, list]) -> list:
     db = get_db()
     res = db.table(table).insert(data).execute()
     return res.data

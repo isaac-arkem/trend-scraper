@@ -1,3 +1,4 @@
+from typing import Union, Optional
 """Trend intelligence pipeline — scrape blowing-up short-form clips (TikTok +
 IG Reels), capture + download their sound and video, cluster by sound, and rank
 by velocity. Writes to the sounds / sound_snapshots / clips / trends tables and
@@ -55,7 +56,7 @@ def _canonical(name: str, author: str) -> str:
     return re.sub(r"\s+", " ", s) or "unknown"
 
 
-def _download(url: str) -> bytes | None:
+def _download(url: str) -> Optional[bytes]:
     if not url:
         return None
     try:
@@ -67,7 +68,7 @@ def _download(url: str) -> bytes | None:
         return None
 
 
-def _put(path: str, data: bytes, content_type: str) -> str | None:
+def _put(path: str, data: bytes, content_type: str) -> Optional[str]:
     try:
         get_minio().put_object(TRENDS_BUCKET, path, io.BytesIO(data), length=len(data),
                                content_type=content_type)
@@ -148,7 +149,7 @@ def normalize_tiktok(i: dict, feed: str, seed: str, region: str = None, market: 
 
 
 # ── persistence ─────────────────────────────────────────────────────────────
-def _upsert_sound(s: dict) -> str | None:
+def _upsert_sound(s: dict) -> Optional[str]:
     """Upsert a sound row, download its audio to MinIO if not already there,
     and write a usage snapshot. Returns the sound row id."""
     if not s.get("platform_sound_id"):
@@ -180,7 +181,7 @@ def _upsert_sound(s: dict) -> str | None:
     return res[0]["id"] if res else None
 
 
-def _save_clip(clip: dict, sound_id: str | None) -> dict | None:
+def _save_clip(clip: dict, sound_id: Optional[str]) -> Optional[dict]:
     db = get_db()
     video_path = None
     if clip.get("_video_dl"):
@@ -213,7 +214,7 @@ def _save_clip(clip: dict, sound_id: str | None) -> dict | None:
     return res[0] if res else None
 
 
-def _process_one(c: dict) -> dict | None:
+def _process_one(c: dict) -> Optional[dict]:
     """Full per-clip work (thread-safe: clients are thread-local): women-filter via
     vision → upsert sound (+download audio) → save clip (+download video).
     If subject_type is already set on the clip (e.g. derived from the creator's

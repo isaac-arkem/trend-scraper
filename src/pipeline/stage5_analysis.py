@@ -1,3 +1,4 @@
+from typing import Union, Optional
 """Stage 5: AI vision analysis of images and video frames."""
 import time
 import httpx
@@ -14,7 +15,7 @@ _DL_HEADERS = {
 }
 
 
-def _download_image(url: str) -> bytes | None:
+def _download_image(url: str) -> Optional[bytes]:
     """Download an image, retrying only transient network errors (DNS/connect/
     timeout). HTTP status errors (404/410 — expired URLs) fail fast, no retry."""
     delay = 2
@@ -62,7 +63,7 @@ def mark_capped(ids: list[str]) -> None:
             .in_("id", ids[i:i+200]).execute()
 
 
-def _is_good_read(saved: dict | None) -> bool:
+def _is_good_read(saved: Optional[dict]) -> bool:
     """A 'good read' = a saved result where a person is clearly visible, i.e. the
     appearance indicators got filled. Those are the images worth stopping on."""
     return bool(saved and saved.get("person_visible"))
@@ -139,7 +140,7 @@ def run(market_id: str, platform: str, cap: int = CAP_PER_CREATOR,
     return total
 
 
-def analyze_asset(asset: dict) -> dict | None:
+def analyze_asset(asset: dict) -> Optional[dict]:
     """Analyze a single media asset end-to-end: mark analyzing → fetch image/frames →
     vision analyze → save result + mark done (or failed). Thread-safe; returns the
     saved analysis_results row, or None on failure/no-result."""
