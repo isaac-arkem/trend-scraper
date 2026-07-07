@@ -106,14 +106,19 @@ def main():
     try:
       for a in accts:
         handle, plat = a["handle"], a["platform"]
+        log(f"── [{done+1}/{len(accts)}] @{handle} ({plat}) | topic={a.get('topic')} region={a.get('region')}")
+
+        log(f"   Fetching latest {PER_ACCOUNT} posts from {plat}…")
         try:
             if plat == "tiktok":
                 clips = T.scrape_tiktok_watchlist([handle], per_handle=PER_ACCOUNT, recency_days=RECENCY_DAYS)
             else:
                 clips = T.scrape_ig_watchlist([handle], per_handle=PER_ACCOUNT, recency_days=RECENCY_DAYS)
         except Exception as e:
-            log(f"  {handle}: scrape failed ({str(e)[:60]}) — skip")
+            log(f"   ✗ Fetch failed: {str(e)[:80]} — skipping account")
             continue
+
+        log(f"   {len(clips)} clips retrieved")
 
         # tag as reference content: topic+region, no feed_source, skip the women-filter
         for c in clips:
@@ -121,31 +126,43 @@ def main():
             c["topic"] = a["topic"]
             c["region"] = a["region"]
             c["subject_type"] = "ref"      # pre-set so process_clips skips per-clip vision
+
         if clips:
-            T.process_clips(clips, workers=8)
+            log(f"   Processing {len(clips)} clips (downloading audio/video, saving to storage)…")
+            saved = T.process_clips(clips, workers=8)
+            log(f"   {saved} clips saved to storage ({len(clips) - saved} duplicates/skipped)")
+        else:
+            log(f"   No clips to process — account may be private or inactive")
 
         appearance = None
-        if appearance_on:
+        if appearance_on and clips:
+            cover_urls = [c.get("_cover_url") for c in clips if c.get("_cover_url")]
+            log(f"   Analyzing appearance from {min(len(cover_urls), APPEARANCE_SAMPLE)} cover frames (vision AI)…")
             try:
-                appearance = aggregate_appearance([c.get("_cover_url") for c in clips if c.get("_cover_url")])
+                appearance = aggregate_appearance(cover_urls)
+                if appearance:
+                    dom = appearance.get("dominant", {})
+                    log(f"   Appearance: skin={dom.get('skin_tone')} hair={dom.get('hair_color')}/{dom.get('hair_length')} "
+                        f"makeup={dom.get('makeup_style')} body={dom.get('body_frame')}")
+                else:
+                    log(f"   No appearance data extracted (no visible person in frames)")
             except QuotaExceededError:
-                log("  ⚠ OpenAI quota out — skipping appearance for remaining accounts (content+voice still scraping)")
+                log("   ⚠ OpenAI quota exceeded — skipping appearance analysis for remaining accounts")
                 appearance_on = False
+
         update = {"scraped_at": datetime.now(timezone.utc).isoformat()}
         if appearance is not None:
             update["appearance"] = appearance
         db.table("reference_accounts").update(update).eq("id", a["id"]).execute()
         done += 1
-        dom = (appearance or {}).get("dominant", {}) if appearance else {}
-        log(f"  ✓ {a['topic']}/{a['region']} @{handle} ({plat}): {len(clips)} clips | "
-            f"look={dom.get('hair_color')},{dom.get('skin_tone')} | {done}/{len(accts)} | {(time.time()-t0)/60:.1f}m")
+        log(f"   ✓ Done — {done}/{len(accts)} accounts complete | elapsed {(time.time()-t0)/60:.1f}m")
 
-      log(f"DONE — {done}/{len(accts)} reference accounts scraped in {(time.time()-t0)/60:.1f}m")
+      log(f"━━ COMPLETE — {done}/{len(accts)} reference accounts scraped in {(time.time()-t0)/60:.1f}m ━━")
       set_request_status(db, request_id, "success")
 
     except Exception as e:
         msg = str(e)
-        log(f"FATAL — {msg}")
+        log(f"✗ FATAL — {msg}")
         set_request_status(db, request_id, "failed", error_message=msg)
         raise
 

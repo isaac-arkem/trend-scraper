@@ -108,21 +108,24 @@ def main():
     total = 0
 
     def do_feed(terms, feed, code, region_code, region_label):
+        log(f"   Scraping {len(terms)} hashtag(s) for {region_label}/{code} (region={region_code}, min={min_views} views, last {recency_days}d)…")
         clips = T.scrape_tiktok_feed(
             terms, feed, region_code=region_code,
             region_label=region_label, market_code=code,
             per_term=CLIPS_PER_TERM,
             threshold=min_views, recency_days=recency_days,
         )
+        log(f"   {len(clips)} clips fetched — downloading audio/video and saving to storage (12 workers)…")
         saved = T.process_clips(clips, workers=12)
+        log(f"   {saved} new clips saved ({len(clips) - saved} duplicates/filtered) — rebuilding trends index…")
         n = T.rebuild_trends()
-        log(f"✓ {region_label}/{code} {feed}: +{saved} | {n} trends live | {(time.time()-t0)/60:.1f}m")
+        log(f"✓ {region_label}/{code} {feed}: +{saved} new | {n} trends live | {(time.time()-t0)/60:.1f}m elapsed")
         return saved
 
     try:
         for code, region_code, region_label in markets:
             for slug in (feed_slugs or ["dance"]):
-                log(f"▶ {region_label}/{code} {slug}: scraping (region={region_code})…")
+                log(f"▶ {region_label}/{code} {slug} feed")
                 total += safe(
                     f"{region_label}/{code} {slug}",
                     lambda t=tags, f=slug, c=code, rc=region_code, rl=region_label:
@@ -130,11 +133,28 @@ def main():
                 ) or 0
 
         log(f"▶ TikTok watchlist ({len(tt_handles)} accounts)…")
-        total += safe("TT watchlist", lambda: (T.process_clips(T.scrape_tiktok_watchlist(tt_handles, per_handle=10), workers=12), T.rebuild_trends())[0]) or 0
-        log(f"▶ IG Reels watchlist ({len(ig_handles)} accounts)…")
-        total += safe("IG watchlist", lambda: (T.process_clips(T.scrape_ig_watchlist(ig_handles, per_handle=10), workers=12), T.rebuild_trends())[0]) or 0
+        def _tt_watchlist():
+            clips = T.scrape_tiktok_watchlist(tt_handles, per_handle=10)
+            log(f"   {len(clips)} clips fetched — processing and saving…")
+            saved = T.process_clips(clips, workers=12)
+            log(f"   {saved} new clips saved — rebuilding trends index…")
+            n = T.rebuild_trends()
+            log(f"✓ TikTok watchlist: +{saved} new | {n} trends live | {(time.time()-t0)/60:.1f}m elapsed")
+            return saved
+        total += safe("TT watchlist", _tt_watchlist) or 0
 
-        log(f"ALL DONE — {total} clips saved in {(time.time()-t0)/60:.1f}m")
+        log(f"▶ Instagram Reels watchlist ({len(ig_handles)} accounts)…")
+        def _ig_watchlist():
+            clips = T.scrape_ig_watchlist(ig_handles, per_handle=10)
+            log(f"   {len(clips)} clips fetched — processing and saving…")
+            saved = T.process_clips(clips, workers=12)
+            log(f"   {saved} new clips saved — rebuilding trends index…")
+            n = T.rebuild_trends()
+            log(f"✓ IG watchlist: +{saved} new | {n} trends live | {(time.time()-t0)/60:.1f}m elapsed")
+            return saved
+        total += safe("IG watchlist", _ig_watchlist) or 0
+
+        log(f"━━ ALL DONE — {total} clips saved in {(time.time()-t0)/60:.1f}m ━━")
         set_request_status(db, request_id, "success")
 
     except Exception as e:
