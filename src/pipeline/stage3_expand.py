@@ -41,7 +41,10 @@ def run(
         connections = data.get("_connections", 0)
         scores = creator_score(
             followers=followers,
-            avg_likes=followers * 0.025,
+            # Snowball expansion sees no posts, so engagement is genuinely
+            # unknown here. `followers * 0.025` fabricated a constant 0.025 —
+            # the same defect fixed in Stage 2. Unknown scores 0 instead.
+            avg_likes=0.0,
             community_connections=connections,
             language_match=True,
             hashtag_match=1,

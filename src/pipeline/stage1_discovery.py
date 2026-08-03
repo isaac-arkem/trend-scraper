@@ -34,6 +34,8 @@ def run(market: dict, platform: str, limit_per_hashtag: int = 100) -> list[dict]
 
     log.info(f"[Stage 1] Found {len(posts)} posts from hashtag sweep")
 
+    observed = _observed_engagement(posts)
+
     # Extract unique creator usernames in ranked order
     seen = set()
     ranked_creators = []
@@ -41,7 +43,31 @@ def run(market: dict, platform: str, limit_per_hashtag: int = 100) -> list[dict]
         u = p.get("username", "").lower().strip()
         if u and u not in seen:
             seen.add(u)
-            ranked_creators.append({"username": u, "platform": platform, "source_type": "hashtag_discovery"})
+            obs = observed.get(u, {})
+            ranked_creators.append({
+                "username": u,
+                "platform": platform,
+                "source_type": "hashtag_discovery",
+                # Carried so Stage 2 can score on real engagement instead of a
+                # placeholder. Dropping these was what made engagement_score the
+                # constant 0.03 for every creator.
+                "observed_avg_likes": obs.get("avg_likes"),
+                "observed_posts": obs.get("posts", 0),
+            })
 
     log.info(f"[Stage 1] Unique creators discovered: {len(ranked_creators)}")
     return ranked_creators, posts
+
+
+def _observed_engagement(posts: list[dict]) -> dict:
+    """{username: {avg_likes, posts}} from the posts already in hand.
+
+    These are the posts that surfaced each creator, so their likes are real
+    measurements — no extra scrape needed to compute them."""
+    likes: dict[str, list] = {}
+    for p in posts:
+        u = (p.get("username") or "").lower().strip()
+        if u:
+            likes.setdefault(u, []).append(p.get("likes") or 0)
+    return {u: {"avg_likes": sum(v) / len(v), "posts": len(v)}
+            for u, v in likes.items() if v}

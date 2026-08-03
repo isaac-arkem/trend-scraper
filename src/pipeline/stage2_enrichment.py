@@ -34,6 +34,11 @@ def run(
     usernames = list({c["username"] for c in candidates if c.get("username")})
     usernames = list(set(usernames + seed_profiles))
 
+    # Real mean likes per creator, measured from the Stage 1 posts that surfaced
+    # them. Keyed by username because raw_profiles comes back from a separate
+    # scrape with no link to the candidate it came from.
+    observed = {c["username"]: c for c in candidates if c.get("username")}
+
     log.info(f"[Stage 2] Enriching {len(usernames)} profiles on {platform.upper()}")
 
     if platform == "instagram":
@@ -55,9 +60,16 @@ def run(
         market_langs = market.get("languages", [])
         lang_match = lang in market_langs if market_langs else True
 
+        # Observed likes, not a proportion of followers. `followers * 0.03` made
+        # engagement_rate() return exactly 0.03 for everyone, killing 35% of the
+        # score weight. Seed profiles have no Stage 1 posts, so they score 0 on
+        # engagement rather than inheriting a fabricated number.
+        cand = observed.get((p.get("username") or "").lower().strip(), {})
+        avg_likes = cand.get("observed_avg_likes")
+
         scores = creator_score(
             followers=followers,
-            avg_likes=followers * 0.03,  # rough estimate before we have post data
+            avg_likes=avg_likes if avg_likes is not None else 0.0,
             community_connections=0,
             language_match=lang_match,
             hashtag_match=1,
