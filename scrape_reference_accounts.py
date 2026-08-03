@@ -26,7 +26,11 @@ from src.db.client import get_db
 from src.pipeline import trends as T
 from src.ai.vision import analyze_image_bytes, QuotaExceededError
 
-PER_ACCOUNT = 15        # recent posts to pull per account
+PER_ACCOUNT = 25        # recent posts per account. 15 was below a stable median,
+                        # which limited every lift number computed downstream.
+                        # Costs Apify results only — clips are pre-tagged
+                        # subject_type='ref' below so they skip per-clip vision,
+                        # and appearance stays capped at APPEARANCE_SAMPLE.
 RECENCY_DAYS = 365      # reference accounts: their content regardless of "trend" recency
 APPEARANCE_SAMPLE = 5   # cover frames to vision-analyze for the appearance profile
 
