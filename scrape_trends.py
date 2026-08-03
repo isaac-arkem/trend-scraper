@@ -4,7 +4,7 @@ Run the trend feeds PER REGION across every market we already have
 (MENA / LATAM / INDOPAC), plus the cross-platform watchlist.
 
 Per market: TikTok dance + hook feeds, geo-targeted via the market's region code,
-filtered to >=20k views / <=14d, women-only (vision), audio+video → MinIO,
+filtered to >=20k views / <=14d, clear human subject (vision), audio+video → MinIO,
 clustered by sound, ranked by velocity. Processed in parallel; trends rebuild
 after every feed so the dashboard fills progressively.
 

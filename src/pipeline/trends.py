@@ -24,6 +24,14 @@ TRENDS_BUCKET = os.environ.get("TRENDS_BUCKET", "trends")
 DEFAULT_THRESHOLD = 20_000      # min views/plays to ingest
 DEFAULT_RECENCY_DAYS = 14       # only clips posted within this window
 
+# Subjects we surface. Both genders count; child / ad / none / unclear do not.
+SUBJECT_TYPES = ("female", "male")
+
+# TikTok's own captions only — free with the scrape. The other enum values
+# (DOWNLOAD_AND_TRANSCRIBE_VIDEOS_WITHOUT_SUBTITLES, TRANSCRIBE_ALL_VIDEOS) run
+# speech-to-text and are billed as an extra event per video.
+SUBTITLES_OPTION = "DOWNLOAD_SUBTITLES"
+
 DANCE_TAGS = ["dancetok", "dance", "dancechallenge", "dancetrend", "dancechallenge2026",
               "newdancechallenge", "trendingdance", "brazildance", "dance2026"]
 HOOK_TAGS = ["blowthisup", "tryit"]
@@ -86,13 +94,81 @@ def _exists(path: str) -> bool:
         return False
 
 
-def classify_subject(cover_url: str) -> str:
-    """Run the clip's cover frame through gpt-4o vision to clean the feed to women.
-    Returns one of: female / male / child / ad / none / unclear."""
+# ── subtitles → transcript (brief D1) ───────────────────────────────────────
+_VTT_TAG = re.compile(r"<[^>]+>")
+
+
+def _vtt_to_text(vtt: str) -> Optional[str]:
+    """WebVTT cues → one plain-text line.
+
+    TikTok's ASR captions repeat the same phrase across consecutive cues (the
+    'big_caption' style), so consecutive duplicates are collapsed."""
+    if not vtt:
+        return None
+    out = []
+    for line in vtt.splitlines():
+        line = line.strip()
+        if (not line or "-->" in line or line.isdigit()
+                or line.upper().startswith(("WEBVTT", "NOTE", "STYLE", "REGION"))):
+            continue
+        line = _VTT_TAG.sub("", line).strip()
+        if line and (not out or out[-1] != line):
+            out.append(line)
+    return " ".join(out) or None
+
+
+def _pick_subtitle(links: list, prefer_lang: str = None) -> Optional[dict]:
+    """Best available track: TikTok's own speech recognition ahead of machine
+    translation, and the video's own language ahead of any other."""
+    usable = [l for l in (links or []) if isinstance(l, dict) and l.get("downloadLink")]
+    if not usable:
+        return None
+
+    def rank(l):
+        lang = (l.get("language") or "").lower()
+        return (
+            0 if (l.get("source") or "").upper() == "ASR" else 1,
+            0 if prefer_lang and lang.startswith(prefer_lang.lower()) else 1,
+        )
+    return sorted(usable, key=rank)[0]
+
+
+def _fetch_transcript(links: list, prefer_lang: str = None) -> dict:
+    """Download the chosen subtitle file → the transcript columns to persist.
+
+    No API cost: TikTok already generated these and we are only fetching a text
+    file. Returns {} when the video has no captions, which is common."""
+    pick = _pick_subtitle(links, prefer_lang)
+    if not pick:
+        return {}
+    raw = _download(pick["downloadLink"])
+    if not raw:
+        return {}
+    vtt = raw.decode("utf-8", errors="replace")
+    text = _vtt_to_text(vtt)
+    if not text:
+        return {}
+    return {
+        "transcript": text,
+        "transcript_vtt": vtt,               # cue timings — task D2 needs these
+        "transcript_lang": pick.get("language"),
+        "transcript_source": pick.get("source"),
+    }
+
+
+def analyze_cover(cover_url: str) -> Optional[dict]:
+    """One gpt-4o call on the clip's cover frame — the full vision read, or None.
+
+    Split out of classify_subject() so the read can be persisted. The call was
+    always being made; only one field of it used to survive."""
     img = _download(cover_url)
     if not img:
-        return "unclear"
-    r = analyze_image_bytes(img)
+        return None
+    return analyze_image_bytes(img) or None
+
+
+def subject_from_vision(r: Optional[dict]) -> str:
+    """Reduce a vision read to one label: female / male / child / ad / none / unclear."""
     if not r:
         return "unclear"
     if not r.get("person_visible"):
@@ -106,6 +182,11 @@ def classify_subject(cover_url: str) -> str:
     if r.get("person_is_female") is False:
         return "male"
     return "unclear"
+
+
+def classify_subject(cover_url: str) -> str:
+    """Subject label only, for callers that do not need the full read."""
+    return subject_from_vision(analyze_cover(cover_url))
 
 
 # ── TikTok normalisation ────────────────────────────────────────────────────
@@ -137,6 +218,8 @@ def normalize_tiktok(i: dict, feed: str, seed: str, region: str = None, market: 
         "market_code": market,
         "_cover_url": vm.get("coverUrl") or vm.get("originalCoverUrl"),
         "_video_dl": (i.get("mediaUrls") or [None])[0],   # populated when shouldDownloadVideos=True
+        "_subtitles": vm.get("subtitleLinks") or [],      # populated when downloadSubtitlesOptions is on
+        "_text_language": i.get("textLanguage"),          # picks the matching subtitle track
         "_sound": {
             "platform": "tiktok",
             "platform_sound_id": music_id,
@@ -209,18 +292,25 @@ def _save_clip(clip: dict, sound_id: Optional[str]) -> Optional[dict]:
     if clip.get("subject_type"):
         row["subject_type"] = clip["subject_type"]
         row["vision_checked"] = True
-        row["suitability_flag"] = clip["subject_type"] == "female"  # single female subject = priority
+        # A clear human subject — male or female. child / ad / none / unclear
+        # are not recreation candidates.
+        row["suitability_flag"] = clip["subject_type"] in SUBJECT_TYPES
+    if clip.get("_vision"):
+        row["appearance"] = clip["_vision"]   # already paid for; was being discarded
+    if clip.get("_subtitles"):
+        row.update(_fetch_transcript(clip["_subtitles"], clip.get("_text_language")))
     res = upsert("clips", row, on_conflict="platform,platform_post_id")
     return res[0] if res else None
 
 
 def _process_one(c: dict) -> Optional[dict]:
-    """Full per-clip work (thread-safe: clients are thread-local): women-filter via
+    """Full per-clip work (thread-safe: clients are thread-local): subject read via
     vision → upsert sound (+download audio) → save clip (+download video).
     If subject_type is already set on the clip (e.g. derived from the creator's
     known appearance), keep it and skip the vision call."""
     if not c.get("subject_type"):
-        c["subject_type"] = classify_subject(c.get("_cover_url"))
+        c["_vision"] = analyze_cover(c.get("_cover_url"))
+        c["subject_type"] = subject_from_vision(c["_vision"])
     s = c.get("_sound") or {}
     sound_id = _upsert_sound(s) if s.get("platform_sound_id") else None
     return _save_clip(c, sound_id)
@@ -274,9 +364,9 @@ def rebuild_trends() -> int:
         clips = []
         for i in range(0, len(sound_ids), 50):
             clips += db.table("clips").select("id,views,velocity,caption,subject_type")\
-                .in_("sound_id", sound_ids[i:i+50]).eq("subject_type", "female")\
+                .in_("sound_id", sound_ids[i:i+50]).in_("subject_type", list(SUBJECT_TYPES))\
                 .is_("topic", "null").execute().data or []   # exclude reference-account clips
-        if not clips:   # no women's clips on this sound → not a trend we surface
+        if not clips:   # no clips with a clear subject on this sound → not a trend
             continue
         ref = max(clips, key=lambda c: c.get("velocity") or 0)
         upsert("trends", {
@@ -290,10 +380,10 @@ def rebuild_trends() -> int:
         }, on_conflict="canonical_key")
         n += 1
 
-    # Sound-less female clips (e.g. IG hashtag reels — no audio metadata) surface
-    # each as its own single-clip trend so they still appear in the Recreate lane.
+    # Sound-less clips (e.g. IG hashtag reels — no audio metadata) surface each
+    # as its own single-clip trend so they still appear in the Recreate lane.
     noaudio = db.table("clips").select("id,views,velocity,caption")\
-        .is_("sound_id", "null").eq("subject_type", "female")\
+        .is_("sound_id", "null").in_("subject_type", list(SUBJECT_TYPES))\
         .is_("topic", "null").limit(2000).execute().data or []   # exclude reference-account clips
     for c in noaudio:
         upsert("trends", {
@@ -318,7 +408,9 @@ def scrape_tiktok_feed(terms: list[str], feed: str, region_code: str = "",
     clips above the view threshold + recency, tagged with region/market."""
     raw = run_actor("clockworks/tiktok-scraper",
                     {"hashtags": terms, "resultsPerPage": per_term,
-                     "shouldDownloadVideos": True, **({"region": region_code} if region_code else {})},
+                     "shouldDownloadVideos": True,
+                     "downloadSubtitlesOptions": SUBTITLES_OPTION,
+                     **({"region": region_code} if region_code else {})},
                     label=f"TT:{feed}:{market_code or 'global'}")
     out = []
     for i in raw:
@@ -439,7 +531,7 @@ def scrape_ig_watchlist(handles: list[str], per_handle: int = 10,
 def surface_existing_ig_reels(max_age_days: int = 30, threshold: int = DEFAULT_THRESHOLD) -> list[dict]:
     """Mine IG video reels we ALREADY scraped (posts table) that crossed the view
     threshold and were posted recently — no new scraping / no paid actor. Tagged
-    with the creator's region; women-filter applied downstream via process_clips.
+    with the creator's region; subject filter applied downstream via process_clips.
     No sound (posts table has no audio metadata)."""
     db = get_db()
     # creator -> (username, region)
@@ -531,7 +623,8 @@ def scrape_tiktok_watchlist(handles: list[str], per_handle: int = 10,
         return []
     raw = run_actor("clockworks/tiktok-scraper",
                     {"profiles": handles, "resultsPerPage": per_handle,
-                     "shouldDownloadVideos": True},
+                     "shouldDownloadVideos": True,
+                     "downloadSubtitlesOptions": SUBTITLES_OPTION},
                     label="TT:watchlist")
     out = []
     for i in raw:
