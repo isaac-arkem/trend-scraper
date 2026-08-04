@@ -73,6 +73,7 @@ const api = {
   trends: (platform,minViews,region) => fetch(`/api/trends?platform=${platform||''}&min_views=${minViews||0}&region=${region||''}`).then(r=>r.json()),
   reference: () => fetch('/api/reference').then(r=>r.json()),
   trendStatus: (id,status) => fetch('/api/trend-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,status})}).then(r=>r.json()),
+  signals: (q) => fetch('/api/signals?'+new URLSearchParams(q)).then(r=>r.json()),
 };
 const TREND_FILE = (p) => p ? `/trend-file?p=${encodeURIComponent(p)}` : '';
 
@@ -887,6 +888,400 @@ function ReferenceClipRow({c}){
   </a>;
 }
 
+// ── signals ──────────────────────────────────────────────────────────────────
+// One board across hashtags / sounds / creators / videos / niches, ranked by
+// how far something beat its own normal rather than by raw size. Ranking on
+// views just re-answers "who is biggest", which every other screen already does.
+
+// Each board answers a different question, so each board gets its own columns
+// and its own filters. Subject (male/female) is a property of who is IN a clip,
+// so it only means something on Creator and Video — filtering a hashtag board
+// by gender silently changes what the tag score is measured over. The niche
+// dropdown is hidden on the Niche board because that board IS the niche axis.
+const SIG_KINDS = [
+  {id:'hashtag', label:'Hashtag', hint:'Which tags carry content that over-performs',
+   filters:['country','region','niche','days'],           rankedBy:'lift'},
+  {id:'sound',   label:'Sound',   hint:'Which audio carries content that over-performs',
+   filters:['country','region','niche','days'],           rankedBy:'lift'},
+  {id:'creator', label:'Creator', hint:'Who is beating their own normal right now',
+   filters:['country','region','niche','days','subject'], rankedBy:'breakout'},
+  {id:'video',   label:'Video',   hint:'Single clips that broke out',
+   filters:['country','region','niche','days','subject'], rankedBy:'lift'},
+  {id:'niche',   label:'Niche',   hint:'Which topics are working, across countries',
+   filters:['country','region','days'],                   rankedBy:'breakout'},
+];
+const KIND = (id) => SIG_KINDS.find(k=>k.id===id) || SIG_KINDS[0];
+
+const TIPS = {
+  lift: 'How far this beat its own normal. Each clip is scored as (its views \u00f7 the median views of the account that posted it), and the row shows the MEDIAN of those scores. 1.0\u00d7 means "exactly typical". 3.0\u00d7 means content here usually does three times what the poster normally gets. It deliberately ignores account size \u2014 a big account doing its usual scores 1.0\u00d7.',
+  breakout: 'What share of the clips actually broke out \u2014 the percentage that did 2\u00d7 their own account\u2019s normal or better. A row can have an unremarkable median but a high breakout rate, which means it produces occasional hits rather than steady over-performance.',
+  best: 'The single biggest lift in this row. Shown separately so one freak clip is visible without being allowed to drive the ranking.',
+  trend: 'Views over time, split into 12 buckets across the selected window. Shape only, not scale \u2014 each sparkline is scaled to its own maximum, so compare direction between rows, not height.',
+  postsviews: 'Total clips in this row and their combined views. This is the size number. It is NOT what the ranking uses \u2014 it is here for context so you can tell a big steady thing from a small spiky one.',
+  normal: 'The median views of the account that posted this clip \u2014 what they usually get. The lift is this clip measured against that number.',
+  scored: 'How many clips in this row had a usable baseline. An account needs enough history before its median means anything, so rows are often scored on fewer clips than they contain.',
+};
+
+function Tip({text, children}) {
+  const [on,setOn] = useState(false);
+  return <span style={{position:'relative',display:'inline-flex',alignItems:'center',gap:3}}
+    onMouseEnter={()=>setOn(true)} onMouseLeave={()=>setOn(false)}>
+    {children}
+    <span style={{fontSize:8.5,opacity:.5,cursor:'help',userSelect:'none'}}>&#9432;</span>
+    {on && <span style={{position:'absolute',bottom:'calc(100% + 8px)',right:0,zIndex:60,
+      width:280,padding:'10px 12px',background:'#111',border:`1px solid ${G}66`,
+      borderRadius:5,boxShadow:'0 8px 26px rgba(0,0,0,.75)',
+      fontSize:11,lineHeight:1.5,fontWeight:400,letterSpacing:0,
+      color:TX,textTransform:'none',textAlign:'left',whiteSpace:'normal'}}>{text}</span>}
+  </span>;
+}
+
+const N = (n) => {
+  n = n || 0;
+  if (n >= 1e9) return (n/1e9).toFixed(1).replace(/\.0$/,'')+'B';
+  if (n >= 1e6) return (n/1e6).toFixed(1).replace(/\.0$/,'')+'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1).replace(/\.0$/,'')+'K';
+  return String(n);
+};
+const X = (v) => (v>=100?Math.round(v):Number(v).toFixed(1))+'\u00d7';
+
+function Spark({data}) {
+  if (!data || data.length < 2 || !data.some(v=>v>0)) return <span style={{fontSize:10,color:DI}}>&mdash;</span>;
+  const max = Math.max(...data) || 1;
+  const w = 88, h = 26, step = w/(data.length-1);
+  const pts = data.map((v,i)=>`${(i*step).toFixed(1)},${(h-(v/max)*(h-3)-1.5).toFixed(1)}`).join(' ');
+  const last = data[data.length-1], prev = data[data.length-2] || 0;
+  const col = last >= prev ? GR : RE;
+  return <svg width={w} height={h} style={{display:'block',overflow:'visible'}}>
+    <polyline points={pts} fill="none" stroke={col} strokeWidth="1.6"
+      strokeLinejoin="round" strokeLinecap="round" opacity="0.9"/>
+    <circle cx={w} cy={h-(last/max)*(h-3)-1.5} r="2.2" fill={col}/>
+  </svg>;
+}
+
+function LiftBadge({value}) {
+  const v = value || 0;
+  const col = v >= 5 ? GR : v >= 2 ? G : v >= 1 ? MU : DI;
+  return <span style={{fontFamily:'Space Grotesk',fontSize:15,fontWeight:700,color:col,
+    fontVariantNumeric:'tabular-nums'}}>{v>=100?Math.round(v):v.toFixed(1)}<span
+    style={{fontSize:10,fontWeight:600,opacity:.65}}>&#215;</span></span>;
+}
+
+function Signals() {
+  const [kind,    setKind]    = useState('hashtag');
+  const [country, setCountry] = useState('ALL');
+  const [region,  setRegion]  = useState('ALL');
+  const [niche,   setNiche]   = useState('ALL');
+  const [subject, setSubject] = useState('all');
+  const [days,    setDays]    = useState('');
+  const [res,     setRes]     = useState(null);
+  const [busy,    setBusy]    = useState(false);
+  const [err,     setErr]     = useState(null);
+  // Evidence floors. None of these has a defensible universal value — they
+  // trade coverage against trust — so they are controls, not constants.
+  const [floors,  setFloors]  = useState({min_bucket:8, min_clips:5, min_views:1000, breakout_at:2});
+  const [showFloors, setShowFloors] = useState(false);
+  const [showHelp,   setShowHelp]   = useState(true);
+
+  const K   = KIND(kind);
+  const has = (f) => K.filters.includes(f);
+
+  // A filter the current board does not show must not still be applied, or the
+  // numbers silently reflect a control the operator cannot see.
+  useEffect(()=>{
+    if (!has('niche')   && niche   !== 'ALL') setNiche('ALL');
+    if (!has('subject') && subject !== 'all') setSubject('all');
+    if (!has('country') && country !== 'ALL') setCountry('ALL');
+    if (!has('region')  && region  !== 'ALL') setRegion('ALL');
+    if (!has('days')    && days    !== '')    setDays('');
+  },[kind]);
+
+  useEffect(()=>{
+    let live = true;
+    setBusy(true); setErr(null);
+    const q = {kind, limit:60, ...floors,
+      country: has('country')?country:'ALL',
+      region:  has('region') ?region :'ALL',
+      niche:   has('niche')  ?niche  :'ALL',
+      subject: has('subject')?subject:'all',
+      days:    has('days')   ?days   :''};
+    api.signals(q)
+      .then(r=>{ if(live) setRes(r); })
+      .catch(e=>{ if(live) setErr(String(e)); })
+      .finally(()=>{ if(live) setBusy(false); });
+    return ()=>{ live = false; };
+  },[kind,country,region,niche,subject,days,floors]);
+
+  const rows   = (res && res.rows) || [];
+  const facets = (res && res.facets) || {countries:[],regions:[],niches:[]};
+  const st     = (res && res.stats) || {};
+
+  // column layout per board — only what that board can actually answer
+  const COLS = {
+    hashtag: [['rank',52],['label',0],['postsviews',112],['lift',96],['breakout',96],['trend',100]],
+    sound:   [['rank',52],['label',0],['postsviews',112],['lift',96],['breakout',96],['trend',100]],
+    creator: [['rank',52],['label',0],['postsviews',112],['breakout',96],['best',96],['trend',100]],
+    niche:   [['rank',52],['label',0],['postsviews',112],['breakout',96],['best',96],['trend',100]],
+    video:   [['rank',52],['label',0],['views',96],['normal',104],['lift',96],['open',72]],
+  }[kind];
+  const grid = COLS.map(([,w])=>w?w+'px':'1fr').join(' ');
+
+  const HEAD = {
+    rank:'RANK', label:kind.toUpperCase(), postsviews:'POSTS · VIEWS', views:'VIEWS',
+    normal:'ACCOUNT NORMAL', lift:'LIFT', breakout:'BREAKOUT', best:'BEST', trend:'TREND', open:'',
+  };
+  const ALIGN = {rank:'left',label:'left',trend:'center',open:'center'};
+  const TIPKEY = {postsviews:'postsviews',views:'postsviews',normal:'normal',
+                  lift:'lift',breakout:'breakout',best:'best',trend:'trend'};
+
+  const sel = {background:S2,color:TX,border:`1px solid ${BR}`,borderRadius:4,
+               padding:'7px 11px',fontSize:12,fontFamily:'Inter'};
+
+  const cell = (r,i,c) => {
+    switch(c){
+      case 'rank': return <div style={{fontFamily:'Space Grotesk',fontSize:16,fontWeight:700,
+        color:i<3?G:DI,fontVariantNumeric:'tabular-nums'}}>{i+1}</div>;
+      case 'label': return <div style={{minWidth:0}}>
+        <div style={{fontSize:13.5,fontWeight:600,color:TX,overflow:'hidden',
+          textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.label}</div>
+        <div style={{fontSize:10.5,color:DI,marginTop:2,overflow:'hidden',
+          textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+          {(r.creators&&r.creators.length) ? r.creators.map(h=>'@'+h).join('  ')
+            : (r.sample&&r.sample.handle ? '@'+r.sample.handle : '')}</div></div>;
+      case 'postsviews': return <div style={{textAlign:'right',fontVariantNumeric:'tabular-nums'}}>
+        <div style={{fontSize:13,fontWeight:600,color:TX}}>{N(r.views)}</div>
+        <div style={{fontSize:10,color:DI}}>{r.posts} {r.posts===1?'post':'posts'}</div></div>;
+      case 'views': return <div style={{textAlign:'right',fontVariantNumeric:'tabular-nums',
+        fontSize:13,fontWeight:600,color:TX}}>{N(r.views)}</div>;
+      case 'normal': return <div style={{textAlign:'right',fontVariantNumeric:'tabular-nums'}}>
+        <div style={{fontSize:12.5,color:MU}}>{r.baseline?N(r.baseline):'—'}</div>
+        <div style={{fontSize:9.5,color:DI}}>usually</div></div>;
+      case 'lift': return <div style={{textAlign:'right'}}>
+        <LiftBadge value={r.lift}/>
+        {kind!=='video' && <div style={{fontSize:9.5,color:DI,marginTop:1}}>best {X(r.best_lift)}</div>}</div>;
+      case 'breakout': return <div style={{textAlign:'right',fontVariantNumeric:'tabular-nums'}}>
+        <div style={{fontFamily:'Space Grotesk',fontSize:15,fontWeight:700,
+          color:r.breakout>=.35?GR:r.breakout>=.2?G:MU}}>{Math.round((r.breakout||0)*100)}%</div>
+        <div style={{fontSize:9.5,color:DI}}>{r.scored} scored</div></div>;
+      case 'best': return <div style={{textAlign:'right',fontVariantNumeric:'tabular-nums'}}>
+        <div style={{fontSize:13,color:MU}}>{X(r.best_lift)}</div>
+        <div style={{fontSize:9.5,color:DI}}>{r.posts} posts</div></div>;
+      case 'trend': return <div style={{display:'flex',justifyContent:'center'}}><Spark data={r.spark}/></div>;
+      case 'open': {
+        const href = (r.sample&&r.sample.url) || ((r.sample&&r.sample.video)?TREND_FILE(r.sample.video):'');
+        return <div style={{textAlign:'center'}}>{href
+          ? <a href={href} target="_blank" style={{fontSize:11,color:G,border:`1px solid ${GD}`,
+              borderRadius:3,padding:'4px 9px'}}>open&nbsp;&#8599;</a>
+          : <span style={{fontSize:10,color:DI}}>&mdash;</span>}</div>;
+      }
+      default: return null;
+    }
+  };
+
+  return <div>
+    {/* Plain-English explainer. Anyone opening this page cold has to be able to
+        understand the two numbers without someone standing next to them. */}
+    {showHelp && <div style={{border:`1px solid ${GD}55`,borderLeft:`3px solid ${G}`,
+      borderRadius:6,background:`${G}0A`,padding:'18px 22px',marginBottom:20}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:20}}>
+        <div style={{maxWidth:900}}>
+          <div style={{fontFamily:'Space Grotesk',fontSize:15,fontWeight:700,color:G,marginBottom:10}}>
+            What am I looking at?</div>
+          <div style={{fontSize:12.5,lineHeight:1.72,color:TX}}>
+            This page answers <b>“what actually worked?”</b> — not “who is biggest”.<br/><br/>
+
+            <b style={{color:G}}>LIFT</b> — did this beat the poster’s own normal?<br/>
+            <span style={{color:MU}}>
+              @surthycooks got 200M views, but 200M is a normal day for them → <b style={{color:TX}}>1.0×</b>, tells you nothing.<br/>
+              @cboothang normally gets 8,000 views and one clip hit 4.9M → <b style={{color:TX}}>606×</b>. <i>That</i> clip did something. Copy that one.<br/>
+              Account size is deliberately ignored, so a small account having a breakout outranks a giant having an ordinary week.
+            </span><br/><br/>
+
+            <b style={{color:G}}>BREAKOUT</b> — how often does this one hit?<br/>
+            <span style={{color:MU}}>
+              “50%” means half their clips beat their own normal by {st.breakout_at||2}× or more. Not lucky once —
+              their <i>format</i> works. Copy the format.
+            </span><br/><br/>
+
+            <b style={{color:G}}>Why the columns change per tab</b><br/>
+            <span style={{color:MU}}>
+              For a hashtag you can ask “does this tag usually help?”, because many different accounts use it — that is lift.
+              For a creator you cannot: measuring someone against themselves always comes out even, which is why lift reads
+              1.0× on every row. So creators and niches are ranked by breakout instead.<br/>
+              <b style={{color:TX}}>Hashtag + Sound → lift. Creator + Niche → breakout. Video → lift.</b>
+            </span><br/><br/>
+
+            <b style={{color:AM}}>Two things to know before you trust a number</b><br/>
+            <span style={{color:MU}}>
+              1. This ranks <b style={{color:TX}}>our own scraped clips</b>, not all of TikTok. TikTok’s Creative Center
+              ranks the whole platform; this ranks the accounts and niches we track. More useful for deciding what to copy,
+              but it is not a TikTok-wide trending board and should not be described as one.<br/>
+              2. The newest clip in here is from <b style={{color:TX}}>22 July</b>. Until the scraper runs again, this is a
+              picture of what worked then, not this week.
+            </span>
+          </div>
+        </div>
+        <button onClick={()=>setShowHelp(false)}
+          style={{flexShrink:0,fontSize:11,color:MU,border:`1px solid ${BR}`,
+            borderRadius:4,padding:'6px 12px'}}>Hide</button>
+      </div>
+    </div>}
+
+    {!showHelp && <button onClick={()=>setShowHelp(true)}
+      style={{fontSize:11,color:MU,border:`1px solid ${BR}`,borderRadius:4,
+        padding:'6px 12px',marginBottom:16}}>? What am I looking at</button>}
+
+    <div style={{display:'grid',gridTemplateColumns:`repeat(${SIG_KINDS.length},1fr)`,gap:10,marginBottom:22}}>
+      {SIG_KINDS.map(k=>{
+        const on = kind===k.id;
+        return <button key={k.id} onClick={()=>setKind(k.id)}
+          style={{textAlign:'left',padding:'14px 16px',borderRadius:6,
+            border:`1px solid ${on?G:BR}`,background:on?`${G}14`:S1}}>
+          <div style={{fontFamily:'Space Grotesk',fontSize:16,fontWeight:700,
+            color:on?G:TX,marginBottom:3}}>{k.label}</div>
+          <div style={{fontSize:10.5,color:on?`${G}CC`:DI,lineHeight:1.35}}>{k.hint}</div>
+        </button>;
+      })}
+    </div>
+
+    <div style={{display:'flex',flexWrap:'wrap',gap:10,alignItems:'center',marginBottom:18}}>
+      {has('country') && <select value={country} onChange={e=>setCountry(e.target.value)} style={sel}>
+        <option value="ALL">All countries</option>
+        {facets.countries.map(f=><option key={f.value} value={f.value}>{f.value} · {f.count}</option>)}
+      </select>}
+      {has('region') && <select value={region} onChange={e=>setRegion(e.target.value)} style={sel}>
+        <option value="ALL">All regions</option>
+        {facets.regions.map(f=><option key={f.value} value={f.value}>{f.value} · {f.count}</option>)}
+      </select>}
+      {has('niche') && <select value={niche} onChange={e=>setNiche(e.target.value)} style={sel}>
+        <option value="ALL">All niches</option>
+        {facets.niches.map(f=><option key={f.value} value={f.value}>{f.value} · {f.count}</option>)}
+      </select>}
+      {has('days') && <select value={days} onChange={e=>setDays(e.target.value)} style={sel}>
+        <option value="">All time</option>
+        <option value="7">Last 7 days</option>
+        <option value="30">Last 30 days</option>
+        <option value="90">Last 90 days</option>
+      </select>}
+      {has('subject') && <div style={{display:'inline-flex',border:`1px solid ${BR}`,borderRadius:4,overflow:'hidden'}}>
+        {[{v:'all',l:'ALL'},{v:'male',l:'MALE'},{v:'female',l:'FEMALE'}].map(o=>
+          <button key={o.v} onClick={()=>setSubject(o.v)}
+            style={{padding:'7px 14px',fontSize:11,fontWeight:600,letterSpacing:'.5px',
+              background:subject===o.v?`${G}1E`:'transparent',
+              color:subject===o.v?G:MU,borderRight:`1px solid ${BR}`}}>{o.l}</button>)}
+      </div>}
+      <button onClick={()=>setShowFloors(v=>!v)}
+        style={{fontSize:11,fontWeight:600,letterSpacing:'.5px',padding:'7px 13px',
+          border:`1px solid ${showFloors?G:BR}`,borderRadius:4,
+          background:showFloors?`${G}1E`:'transparent',color:showFloors?G:MU}}>
+        FLOORS {showFloors?'\u2715':'\u2699'}</button>
+      <div style={{marginLeft:'auto',fontSize:10.5,color:DI,textAlign:'right',lineHeight:1.5}}>
+        ranked by <b style={{color:G}}>{K.rankedBy}</b> · {N(st.clips_matched)} of {N(st.clips_total)} clips match<br/>
+        baseline from {st.accounts_with_baseline} accounts · min {st.min_clips_per_bucket} clips per row
+      </div>
+    </div>
+
+    {showFloors && <div style={{border:`1px solid ${BR}`,borderRadius:6,background:S1,
+      padding:'16px 18px',marginBottom:14}}>
+      <div style={{display:'flex',flexWrap:'wrap',gap:22,alignItems:'flex-end'}}>
+        {[
+          {k:'min_bucket', l:'CLIPS PER ROW', min:2, max:30, step:1,
+           why:'How many scored clips a hashtag, sound, creator or niche needs before it is allowed on the board. This is the strongest lever against spikes: a tag with three clips and one freak hit will top the board at any baseline setting.'},
+          {k:'min_clips',  l:'CLIPS PER ACCOUNT', min:2, max:30, step:1,
+           why:'How much history an account needs before its median counts as a baseline. Below this the account is unscored and its clips drop out of every calculation.'},
+          {k:'min_views',  l:'BASELINE FLOOR', min:0, max:50000, step:500,
+           why:'How big an account median must be to be trusted. Without this, an account that normally gets 40 views turns a routine clip into a 500x outlier.'},
+          {k:'breakout_at',l:'BREAKOUT AT', min:1.5, max:10, step:.5,
+           why:'How far above its own normal a clip must go to count as a breakout. Only affects the BREAKOUT column and the Creator/Niche ranking.'},
+        ].map(f=>
+          <div key={f.k} style={{minWidth:150}}>
+            <div style={{fontSize:9,fontWeight:700,letterSpacing:'1.4px',color:DI,marginBottom:6}}>
+              <Tip text={f.why}><span>{f.l}</span></Tip>
+            </div>
+            <div style={{display:'flex',alignItems:'center',gap:9}}>
+              <input type="range" min={f.min} max={f.max} step={f.step} value={floors[f.k]}
+                onChange={e=>setFloors({...floors,[f.k]:Number(e.target.value)})}
+                style={{width:96,accentColor:G}}/>
+              <span style={{fontFamily:'Space Grotesk',fontSize:15,fontWeight:700,color:G,
+                fontVariantNumeric:'tabular-nums',minWidth:46}}>
+                {f.k==='min_views'?N(floors[f.k]):floors[f.k]}{f.k==='breakout_at'?'\u00d7':''}</span>
+            </div>
+          </div>)}
+        <button onClick={()=>setFloors({min_bucket:8,min_clips:5,min_views:1000,breakout_at:2})}
+          style={{marginLeft:'auto',fontSize:11,color:MU,border:`1px solid ${BR}`,
+            borderRadius:4,padding:'7px 13px'}}>Reset</button>
+      </div>
+      <div style={{marginTop:14,paddingTop:12,borderTop:`1px solid ${S2}`,
+        fontSize:11,color:MU,lineHeight:1.6}}>
+        <b style={{color:TX}}>{st.accounts_with_baseline}</b> of {st.accounts_total} accounts clear the
+        baseline floors, covering <b style={{color:TX}}>{N(st.clips_scorable)}</b> of {N(st.clips_matched)} matched
+        clips. <b style={{color:TX}}>{rows.length}</b> rows survive.
+        <span style={{color:DI}}> Raising CLIPS PER ROW is what removes freak results — at 5 the top hashtag
+        is a 5-clip spike, at 8 it settles to something repeatable. Every number on this page moves when
+        these move, so pick them once and write them down.</span>
+      </div>
+    </div>}
+
+    <div style={{border:`1px solid ${BR}`,borderRadius:6,background:S1}}>
+      {/* overflow stays visible here so header tooltips are not clipped */}
+      <div style={{display:'grid',gridTemplateColumns:grid,gap:14,padding:'11px 18px',
+        background:S2,borderBottom:`1px solid ${BR}`,fontSize:9.5,fontWeight:700,
+        letterSpacing:'1.4px',color:DI,position:'relative',
+        borderRadius:'6px 6px 0 0'}}>
+        {COLS.map(([c])=>{
+          const ranked = (c===K.rankedBy);
+          const inner = <span style={{color:ranked?G:DI}}>{HEAD[c]}</span>;
+          return <div key={c} style={{display:'flex',
+            justifyContent:(ALIGN[c]==='left')?'flex-start':(ALIGN[c]==='center'?'center':'flex-end')}}>
+            {TIPKEY[c] ? <Tip text={TIPS[TIPKEY[c]]}>{inner}</Tip> : inner}
+          </div>;
+        })}
+      </div>
+
+      {busy && <div style={{padding:'40px',textAlign:'center',color:MU,fontSize:13}}>
+        <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>&#10227;</span> Scoring…
+      </div>}
+
+      {!busy && err && <div style={{padding:'34px',textAlign:'center',color:RE,fontSize:12.5}}>
+        Could not load signals — {err}<br/>
+        <span style={{color:DI,fontSize:11}}>Is dashboard.py still running on :8050?</span>
+      </div>}
+
+      {!busy && !err && !rows.length && <div style={{padding:'44px',textAlign:'center',color:DI,fontSize:13}}>
+        Nothing clears the evidence floor with these filters.<br/>
+        <span style={{fontSize:11.5}}>A row needs {st.min_clips_per_bucket} clips from accounts with
+        enough history to have a baseline.</span></div>}
+
+      {!busy && !err && rows.map((r,i)=>
+        <div key={r.key} style={{display:'grid',gridTemplateColumns:grid,gap:14,
+          padding:'13px 18px',alignItems:'center',
+          borderBottom:i===rows.length-1?'none':`1px solid ${S2}`,
+          borderRadius:i===rows.length-1?'0 0 6px 6px':0,
+          background:i%2?'transparent':'#0D0D0D'}}>
+          {COLS.map(([c])=><React.Fragment key={c}>{cell(r,i,c)}</React.Fragment>)}
+        </div>)}
+    </div>
+
+    <div style={{marginTop:14,fontSize:10.5,color:DI,lineHeight:1.6,maxWidth:1080}}>
+      This board is ranked by <b style={{color:G}}>{K.rankedBy}</b>.
+      {(K.rankedBy==='breakout')
+        ? <span> Lift is not shown here on purpose: a creator's clips measured against that same
+          creator's own median sit half above and half below by definition, so it reads 1.0× on every
+          row and carries no information. Niches inherit the same problem because they are made of
+          whole accounts.</span>
+        : <span> These buckets draw from many different accounts, so the median lift is meaningful.</span>}
+      {' '}Rows need {st.min_clips_per_bucket} scored clips; an account needs {st.min_clips_for_baseline} clips
+      and a {N(st.min_baseline_views)}-view median before it can act as a baseline. Paid partnerships are
+      excluded and child-classified clips are hidden in every mode.
+      {has('subject') || <span> Male/female is not offered on this board — it describes who is in a
+        clip, so filtering by it would quietly change what the row is measured over.</span>}
+      {' '}Country, region and niche labels are normalised on read: <b style={{color:MU}}>latam</b> and
+      <b style={{color:MU}}> LATAM</b> are one bucket, <b style={{color:MU}}>UAE</b> resolves to
+      <b style={{color:MU}}> AE</b>.
+    </div>
+  </div>;
+}
+
 // ── main app ─────────────────────────────────────────────────────────────────
 function App() {
   const [markets, setMarkets]   = useState([]);
@@ -915,6 +1310,9 @@ function App() {
   const sc = {done:GR,failed:RE,running:AM}[lastStatus] || MU;
 
   const NAV=[
+    {group:'SIGNALS', items:[
+      {id:'signals', label:'What\'s Working'},
+    ]},
     {group:'APPEARANCE', items:[
       {id:'overview', label:'Overview'},
       {id:'creators', label:'Creators & Images'},
@@ -922,12 +1320,13 @@ function App() {
       {id:'pipeline', label:'Pipeline'},
     ]},
     {group:'TRENDS', items:[
-      {id:'trends', label:'🔥 Dance Trends'},
+      {id:'trends', label:'Dance Trends'},
       {id:'reference', label:'Reference Profiles'},
     ]},
   ];
   const isTrends = tab==='trends';
   const isReference = tab==='reference';
+  const isSignals = tab==='signals';
 
   return <div style={{minHeight:'100vh',background:BK,display:'flex'}}>
     {/* SIDEBAR */}
@@ -959,8 +1358,8 @@ function App() {
         borderBottom:`1px solid ${GD}`,padding:'20px 36px',
         display:'flex',justifyContent:'space-between',alignItems:'center'}}>
       <div style={{fontFamily:'Space Grotesk',fontSize:22,fontWeight:700,color:TX}}>
-          {isTrends?'🔥 Dance Trends — Recreate Targets':isReference?'Reference Profiles — Niche & Region Mapper':'Intelligence Dashboard'}</div>
-        {!isTrends && !isReference && <div style={{display:'flex',gap:22,alignItems:'center'}}>
+          {isSignals?"What's Working — ranked by lift, not size":isTrends?'🔥 Dance Trends — Recreate Targets':isReference?'Reference Profiles — Niche & Region Mapper':'Intelligence Dashboard'}</div>
+        {!isTrends && !isReference && !isSignals && <div style={{display:'flex',gap:22,alignItems:'center'}}>
           {[[c.length,'CREATORS',G],[tpo,'POSTS',GL],[tm,'MEDIA',AM],[tp,'ANALYZED',GR]].map(([n,l,col])=>(
             <div key={l} style={{textAlign:'right'}}>
               <div style={{fontFamily:'Space Grotesk',fontSize:26,fontWeight:700,color:col,lineHeight:1}}>{n.toLocaleString()}</div>
@@ -975,7 +1374,7 @@ function App() {
       </div>
 
       {/* controls (appearance views only) */}
-      {!isTrends && !isReference && <div style={{background:S1,borderBottom:`1px solid ${BR}`,padding:'12px 36px',display:'flex',alignItems:'flex-end',gap:16}}>
+      {!isTrends && !isReference && !isSignals && <div style={{background:S1,borderBottom:`1px solid ${BR}`,padding:'12px 36px',display:'flex',alignItems:'flex-end',gap:16}}>
         <div>
           <div style={{fontSize:9,fontWeight:700,letterSpacing:'2px',color:DI,marginBottom:5}}>MARKET</div>
           <select value={market||''} onChange={e=>setMarket(e.target.value)}
@@ -1000,7 +1399,7 @@ function App() {
 
       {/* content */}
       <div style={{padding:'28px 36px'}}>
-        {isTrends ? <Trends/> : isReference ? <ReferenceProfiles/> : <>
+        {isSignals ? <Signals/> : isTrends ? <Trends/> : isReference ? <ReferenceProfiles/> : <>
           {loading && <div style={{color:MU,fontSize:13,marginBottom:24,display:'flex',alignItems:'center',gap:8}}>
             <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span> Loading data…</div>}
           {!market && <div style={{color:DI,fontSize:14,marginTop:80,textAlign:'center'}}>← Select a market to begin</div>}

@@ -409,11 +409,106 @@ def api_trend_status():
     return jsonify({"ok": True})
 
 
+# ── signals: one ranked view across hashtags / sounds / creators / videos ────
+# Ranks by lift (how far something beat its own normal), not by raw size.
+# Labels from all three source tables are normalised on read — see src/signals.py.
+@app.route("/api/signals")
+def api_signals():
+    import src.signals as S
+
+    kind    = request.args.get("kind", "hashtag")
+    country = request.args.get("country", "ALL")
+    region  = request.args.get("region", "ALL")
+    niche   = request.args.get("niche", "ALL")
+    subject = request.args.get("subject", "all")
+    days    = request.args.get("days")
+    days    = int(days) if days and days.isdigit() else None
+    limit   = min(int(request.args.get("limit", 50)), 200)
+    ads     = request.args.get("ads") == "include"
+    def _num(name, cast=int):
+        v = request.args.get(name)
+        try:
+            return cast(v) if v not in (None, "") else None
+        except ValueError:
+            return None
+
+    mb      = _num("min_bucket")
+    mbase   = _num("min_clips")        # clips an account needs before it has a baseline
+    mviews  = _num("min_views")        # and how big that baseline median must be
+    brk     = _num("breakout_at", float)
+
+    clips, sound_names = S.load_clips(db, force=request.args.get("refresh") == "1")
+
+    # Baselines come from the whole corpus, not the filtered slice — an account's
+    # normal is its normal regardless of which country tab you are looking at.
+    baselines = S.account_baselines(clips, min_clips=mbase, min_views=mviews)
+
+    sel = S.apply_filters(clips, country=country, region=region, niche=niche,
+                          subject=subject, days=days, exclude_ads=not ads)
+
+    if kind == "hashtag":
+        rows = S.rank_hashtags(sel, baselines, days=days, limit=limit, min_bucket=mb, breakout_at=brk)
+    elif kind == "sound":
+        rows = S.rank_sounds(sel, baselines, sound_names, days=days, limit=limit, min_bucket=mb, breakout_at=brk)
+    elif kind == "creator":
+        rows = S.rank_creators(sel, baselines, days=days, limit=limit, min_bucket=mb, breakout_at=brk)
+    elif kind == "niche":
+        rows = S.rank_niches(sel, baselines, days=days, limit=limit, min_bucket=mb, breakout_at=brk)
+    else:
+        rows = S.rank_videos(sel, baselines, days=days, limit=limit, breakout_at=brk)
+
+    return jsonify({
+        "kind": kind,
+        "rows": rows,
+        "facets": S.facets(clips),
+        "stats": {
+            "clips_total": len(clips),
+            "clips_matched": len(sel),
+            "accounts_with_baseline": len(baselines),
+            "accounts_total": len({(c.get("creator_handle") or "").lower()
+                                   for c in clips if c.get("creator_handle")}),
+            "min_clips_for_baseline": mbase if mbase is not None else S.MIN_CLIPS_FOR_BASELINE,
+            "min_baseline_views": mviews if mviews is not None else S.MIN_BASELINE_VIEWS,
+            "clips_scorable": sum(1 for c in sel
+                                  if (c.get("creator_handle") or "").lower() in baselines),
+            "min_clips_per_bucket": mb or S.MIN_CLIPS_PER_BUCKET,
+            "defaults": {"min_bucket": S.MIN_CLIPS_PER_BUCKET,
+                         "min_clips": S.MIN_CLIPS_FOR_BASELINE,
+                         "min_views": S.MIN_BASELINE_VIEWS,
+                         "breakout_at": S.BREAKOUT_AT},
+            "breakout_at": brk if brk is not None else S.BREAKOUT_AT,
+            "ranked_by": "breakout" if kind in ("creator", "niche") else "lift",
+        },
+    })
+
+
+@app.route("/api/signals/coverage")
+def api_signals_coverage():
+    """What the raw labels look like vs what they normalise to."""
+    import src.signals as S
+    clips, _ = S.load_clips(db)
+    return jsonify(S.coverage(clips))
+
+
 # ── serve React app ──────────────────────────────────────────────────────────
 @app.route("/")
 def index():
     return send_file("static/index.html")
 
+def _warm_signals():
+    """Pull the clip corpus once at boot. The first /api/signals call otherwise
+    pays for ~9k rows of paging while the operator watches a spinner."""
+    try:
+        import src.signals as S
+        t = time.time()
+        clips, _ = S.load_clips(db)
+        print(f"signals cache warm — {len(clips)} clips in {time.time()-t:.1f}s")
+    except Exception as e:
+        print(f"signals warm failed (first request will be slow): {str(e)[:90]}")
+
+
 if __name__ == "__main__":
+    import threading, time
+    threading.Thread(target=_warm_signals, daemon=True).start()
     print("Community Mapper → http://localhost:8050")
     app.run(port=8050, host="0.0.0.0", debug=False)
