@@ -174,7 +174,7 @@ td:first-child{font-family:var(--mono);color:var(--tx)}
   <section id="s2">
     <div class="grid2">
       <div class="card"><h2 id="c2h">Set up</h2><div class="body">
-        <div class="field"><label class="f">Run title <em>required</em></label>
+        <div class="field" id="f-title"><label class="f">Run title <em>required</em></label>
           <input type="text" id="title" placeholder="Gulf beauty refresh — August" autocomplete="off">
           <div class="help">How this run appears in history.</div></div>
 
@@ -192,7 +192,7 @@ td:first-child{font-family:var(--mono);color:var(--tx)}
           <textarea id="accts" placeholder="https://www.tiktok.com/@shams.hd&#10;https://www.instagram.com/layan.noor/&#10;@nour.k"></textarea>
           <div class="help">One per line. Profile links or @handles, TikTok and Instagram both work.</div></div>
 
-        <div class="field" id="f-tags"><label class="f">Hashtags <i>optional</i></label>
+        <div class="field" id="f-tags"><label class="f" id="tagLab">Hashtags <i>optional</i></label>
           <input type="text" id="tags" placeholder="grwm, beautytok, skincare" autocomplete="off">
           <div class="help" id="tagHelp"></div>
           <div class="chips" id="tagChips"></div></div>
@@ -286,14 +286,14 @@ const STEP_DONE = DEV ? 5 : 4;
 const PIPE = {
   reference:{ title:'Track accounts you know', head:'Which accounts?',
     sub:'Paste the accounts you follow and tag each one with a niche. No country needed — these are accounts you already have.',
-    fields:['title','plat','accts','niche'], ai:false, unit:'account', ref:{d:25,p:1.20} },
+    fields:['plat','accts','niche'], ai:false, unit:'account', ref:{d:25,p:1.20} },
   creators:{ title:'Find new creators', head:'Where should we search?',
-    sub:'Choose the markets to search. Hashtags help us find the right kind of creator — leave blank to use the usual ones.',
-    fields:['title','country','plat','tags'], ai:true, unit:'creator', ref:{d:25,p:61.20},
-    tagHelp:'Leave blank to use the standard set for that market.' },
+    sub:'Choose the markets to search, and the hashtags that describe the creators you want. The hashtags are how we find them.',
+    fields:['country','plat','tags'], needTags:true, ai:true, unit:'creator', ref:{d:25,p:61.20},
+    tagHelp:'These seed the search. Pick tags the creators you want would actually post under.' },
   trends:{ title:"What's trending", head:'Where should we look?',
     sub:'Choose the markets. Add hashtags to narrow it to a topic, or leave blank for whatever is trending there.',
-    fields:['title','country','tags'], ai:false, unit:'hashtag', ref:{d:15,p:0.06},
+    fields:['country','tags'], ai:false, unit:'hashtag', ref:{d:15,p:0.06},
     tagHelp:'Leave blank to see everything trending in that country.' }
 };
 
@@ -328,8 +328,9 @@ function ok(step){
   if(step===1) return !!S.pipe;
   if(step===2){
     const p=PIPE[S.pipe],e=[];
-    if(!$('title').value.trim()) e.push('Give the run a title.');
+    if(p.fields.includes('title') && !$('title').value.trim()) e.push('Give the run a title.');
     if(p.fields.includes('country') && !S.countries.length) e.push('Add at least one country.');
+    if(p.needTags && !tags().length) e.push('Add at least one hashtag - this is how we find creators.');
     if(p.fields.includes('accts')){
       const a=accts();
       if(!a.filter(x=>!x.bad).length) e.push('Add at least one account.');
@@ -384,7 +385,9 @@ const JENKINS_JOB = 'social-listening-scrapers';
 function jenkinsParams(){
   const a=accts().filter(x=>!x.bad), t=tags();
   const plat = S.plats.length===2 ? 'both' : (S.plats[0]||'both');
-  const P = { TITLE: $('title').value.trim() };
+  const P = {};
+  const t0 = $('title').value.trim();
+  if(t0) P.TITLE = t0;
 
   if(S.pipe==='reference'){
     P.SCRAPER_TYPE = 'reference_profiles';
@@ -492,9 +495,11 @@ document.querySelectorAll('.pk').forEach(b=>b.onclick=()=>{
     ?'<b>This one uses AI.</b> We stop looking at an account as soon as we can tell what they look like, and give up entirely if the first few images show no one.'
     :'<b>No AI analysis.</b> Collection only, so it is the cheaper option.';
   $('c2h').textContent=p.head; $('sub').textContent=p.sub;
-  ['country','plat','accts','tags'].forEach(f=>
+  ['title','country','plat','accts','tags'].forEach(f=>
     $('f-'+f).style.display=p.fields.includes(f)?'block':'none');
   $('c-niche').style.display=p.fields.includes('niche')?'block':'none';
+  $('tagLab').innerHTML = p.needTags
+    ? 'Hashtags <em>required</em>' : 'Hashtags <i>optional</i>';
   if(p.tagHelp) $('tagHelp').textContent=p.tagHelp;
   if(DEV) $('depthLab').textContent='Posts from each '+p.unit;
 });

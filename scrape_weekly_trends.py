@@ -99,19 +99,18 @@ STOP_TAGS = {
     "blowthisup", "tryit", "reels", "reelsdance",
 }
 
-# TikTok returns only ~3 trending hashtags per country per industry, so sweeping
-# a handful of industries is what turns 3 real tags into a usable seed list.
-TRENDING_INDUSTRIES = ["All Industries", "Beauty & Personal Care", "Food & Beverage",
-                       "Entertainment", "Health & Fitness", "Gaming", "Sports & Outdoor",
-                       "Travel", "Apparel & Accessories", "Education"]
+# TikTok returns only ~3 trending hashtags per country per industry, so the whole
+# board is only reachable by sweeping every industry. Two names here were wrong
+# before — "Sports & Outdoor" and "Apparel & Accessories" are not values the
+# actor accepts, so those two sweeps quietly returned nothing.
+TRENDING_INDUSTRIES = [
+    "All Industries", "Gaming", "Beauty & Personal Care", "Food & Beverage",
+    "Health & Fitness", "Entertainment", "Sports & Outdoors", "Education",
+    "Travel", "Fashion & Apparel", "Technology", "Home & Décor",
+    "Parenting & Kids", "Media & Entertainment", "News & Information",
+]
 
 
-TRENDING_ACTOR = "khadinakbar/tiktok-trending-hashtags-scraper"
-
-# Countries the trending actor covers. AM is not among them, so Armenia falls
-# back to its configured market tags.
-TRENDING_COUNTRIES = {"AE","KW","TR","ZA","EG","MA","SA","NG",
-                      "BR","MX","CO","AR","IN","ID","PH","TH"}
 
 
 def trending_hashtags(country, days=7, limit=40, industry="All Industries"):
