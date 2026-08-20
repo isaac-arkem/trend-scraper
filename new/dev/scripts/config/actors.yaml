@@ -1,0 +1,115 @@
+actors:
+  instagram:
+    hashtag_scraper:
+      id: "apify/instagram-hashtag-scraper"
+      input_fields:
+        hashtags: "hashtags"
+        limit: "resultsLimit"
+      output_fields:
+        username: "ownerUsername"
+        post_url: "url"
+        caption: "caption"
+        likes: "likesCount"
+        comments_count: "commentsCount"
+        views: "videoViewCount"
+        image_url: "displayUrl"
+        video_url: "videoUrl"
+        timestamp: "timestamp"
+        hashtags: "hashtags"
+        post_id: "shortCode"
+
+    profile_scraper:
+      id: "apify/instagram-profile-scraper"
+      input_fields:
+        usernames: "usernames"
+      output_fields:
+        username: "username"
+        full_name: "fullName"
+        bio: "biography"
+        followers: "followersCount"
+        following: "followsCount"
+        post_count: "postsCount"
+        profile_url: "url"
+        profile_pic: "profilePicUrl"
+        is_verified: "verified"
+        platform_user_id: "id"
+        related_profiles: "relatedProfiles"
+
+    post_scraper:
+      id: "apify/instagram-post-scraper"
+      input_fields:
+        usernames: "usernames"
+        limit: "resultsLimit"
+      output_fields:
+        post_id: "shortCode"
+        post_url: "url"
+        caption: "caption"
+        likes: "likesCount"
+        comments_count: "commentsCount"
+        views: "videoViewCount"
+        image_url: "displayUrl"
+        video_url: "videoUrl"
+        timestamp: "timestamp"
+        hashtags: "hashtags"
+        media_type: "type"
+
+    comments_scraper:
+      id: "apify/instagram-comments-scraper"
+      input_fields:
+        post_urls: "directUrls"
+        limit: "resultsLimit"
+      output_fields:
+        commenter_username: "ownerUsername"
+        commenter_id: "ownerId"
+        text: "text"
+        likes: "likesCount"
+
+  tiktok:
+    search_scraper:
+      id: "clockworks/tiktok-scraper"
+      input_fields:
+        hashtags: "hashtags"
+        keywords: "keywords"
+        region: "region"
+        limit: "resultsPerPage"
+      output_fields:
+        username: "authorMeta.name"
+        post_url: "webVideoUrl"
+        caption: "text"
+        likes: "diggCount"
+        comments_count: "commentCount"
+        views: "playCount"
+        shares: "shareCount"
+        video_url: "videoUrl"
+        timestamp: "createTimeISO"
+        hashtags: "hashtags"
+        post_id: "id"
+        platform_user_id: "authorMeta.id"
+
+    profile_scraper:
+      id: "clockworks/tiktok-profile-scraper"
+      input_fields:
+        usernames: "profiles"
+        limit: "resultsPerPage"
+      output_fields:
+        username: "userInfo.user.uniqueId"
+        full_name: "userInfo.user.nickname"
+        bio: "userInfo.user.signature"
+        followers: "userInfo.stats.followerCount"
+        following: "userInfo.stats.followingCount"
+        post_count: "userInfo.stats.videoCount"
+        platform_user_id: "userInfo.user.id"
+        profile_pic: "userInfo.user.avatarLarger"
+        is_verified: "userInfo.user.verified"
+
+    following_scraper:
+      id: "clockworks/tiktok-followers-scraper"
+      input_fields:
+        username: "username"
+        list_type: "listType"
+        limit: "maxItems"
+      output_fields:
+        username: "uniqueId"
+        full_name: "nickname"
+        followers: "followerCount"
+        platform_user_id: "id"

@@ -1,0 +1,543 @@
+<title>SSE — Social Listening (dev)</title>
+<style>
+:root{
+  --bg:#0A0A0A; --s1:#111; --s2:#161616; --s3:#1C1C1C; --br:#282828;
+  --tx:#F0F0F0; --tx2:#C8C8C8; --mu:#8A8A8A; --di:#565656;
+  --y:#D8E84A; --ydim:#2C3310; --ysoft:#1A1D0C; --inv:#0A0A0A;
+  --gr:#5FCE8A; --am:#E5A93F; --re:#EE7A6B;
+  --sans:"Helvetica Neue",Helvetica,"Segoe UI",system-ui,-apple-system,sans-serif;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:var(--sans);
+     font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
+
+/* top bar */
+.top{border-bottom:1px solid var(--br);padding:14px 30px;display:flex;align-items:center;gap:34px}
+.brand small{display:block;font-size:9.5px;letter-spacing:.2em;color:var(--mu);text-transform:uppercase}
+.brand b{font-size:16px;font-weight:700;letter-spacing:-.01em}
+.top nav{display:flex;gap:22px;font-size:13.5px}
+.top nav a{color:var(--mu);text-decoration:none;padding:6px 0;border-bottom:2px solid transparent}
+.top nav a.on{color:var(--tx);border-bottom-color:var(--y)}
+.env{margin-left:auto;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
+     text-transform:uppercase;padding:4px 10px;border-radius:4px;border:1px solid var(--br);color:var(--mu)}
+.env.dev{border-color:var(--y);color:var(--y)}
+
+.page{max-width:1180px;margin:0 auto;padding:26px 30px 90px}
+.crumb{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--di);margin-bottom:8px}
+h1{font-size:25px;font-weight:700;letter-spacing:-.022em;margin:0 0 6px}
+.sub{color:var(--mu);margin:0 0 26px;font-size:14.5px;max-width:66ch}
+
+/* stepper */
+.stepper{display:flex;border:1px solid var(--br);border-radius:7px;overflow:hidden;margin-bottom:26px}
+.stp{flex:1;display:flex;align-items:center;gap:9px;padding:13px 18px;border-right:1px solid var(--br);
+     font-size:13px;color:var(--di);background:var(--s1)}
+.stp:last-child{border-right:none}
+.stp .n{width:19px;height:19px;border-radius:50%;border:1px solid var(--br);display:grid;
+        place-items:center;font-size:10.5px;font-family:var(--mono)}
+.stp.on{color:var(--tx);background:var(--s2)}
+.stp.on .n{background:var(--y);border-color:var(--y);color:var(--inv);font-weight:700}
+.stp.ok{color:var(--tx2)}
+.stp.ok .n{border-color:var(--gr);color:var(--gr)}
+
+section{display:none} section.on{display:block}
+.grid2{display:grid;gap:20px} @media(min-width:900px){.grid2{grid-template-columns:1.15fr .85fr}}
+
+.card{border:1px solid var(--br);border-radius:8px;background:var(--s1);overflow:hidden}
+.card>h2{font-size:14px;font-weight:700;margin:0;padding:14px 20px;border-bottom:1px solid var(--br);
+         background:var(--s2);letter-spacing:-.005em}
+.card>h2 span{float:right;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
+              text-transform:uppercase;color:var(--di);font-weight:400}
+.card .body{padding:20px}
+
+label.f{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.13em;text-transform:uppercase;
+        color:var(--mu);margin:0 0 7px}
+label.f em{font-style:normal;color:var(--y)}
+label.f i{font-style:normal;color:var(--di);text-transform:none;letter-spacing:0;font-family:var(--sans);font-size:11.5px}
+input[type=text],textarea,select{width:100%;background:var(--s2);color:var(--tx);border:1px solid var(--br);
+  border-radius:6px;padding:10px 12px;font-size:14px;font-family:inherit;outline:none}
+input:focus,textarea:focus,select:focus{border-color:var(--y)}
+textarea{min-height:110px;font-family:var(--mono);font-size:12.5px;resize:vertical}
+.field{margin-bottom:20px} .field:last-child{margin-bottom:0}
+.help{font-size:12px;color:var(--di);margin-top:6px}
+
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.chip{font-family:var(--mono);font-size:11px;padding:4px 8px;border-radius:4px;background:var(--s3);
+      border:1px solid var(--br);color:var(--tx2);display:inline-flex;align-items:center;gap:6px}
+.chip b{color:var(--y);font-weight:600} .chip .x{color:var(--di);cursor:pointer}
+.chip.warn{border-color:var(--am);color:var(--am)}
+.chip.new{border-color:var(--y);color:var(--y)}
+
+.seg{display:inline-flex;border:1px solid var(--br);border-radius:6px;overflow:hidden;flex-wrap:wrap}
+.seg button{padding:8px 15px;font-size:12.5px;font-weight:600;background:transparent;color:var(--mu);
+            border:none;border-right:1px solid var(--br);cursor:pointer;font-family:inherit}
+.seg button:last-child{border-right:none}
+.seg button.on{background:var(--ydim);color:var(--y)}
+
+/* per-account niche rows */
+.acct{display:grid;grid-template-columns:1fr 200px 26px;gap:9px;align-items:center;
+      padding:9px 0;border-bottom:1px solid var(--s3)}
+.acct:last-child{border-bottom:none}
+.acct .who{font-family:var(--mono);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acct .who b{color:var(--y);font-weight:600;margin-right:6px}
+.acct select{padding:6px 9px;font-size:12.5px}
+.acct .rm{color:var(--di);cursor:pointer;text-align:center;font-size:15px}
+
+.est .row{display:flex;justify-content:space-between;padding:7px 0;font-size:13px;color:var(--tx2)}
+.est .row b{font-family:var(--mono);color:var(--tx)}
+.est .row.tot{border-top:1px solid var(--br);margin-top:9px;padding-top:12px;font-size:15px;
+              font-weight:700;color:var(--tx)}
+.est .row.tot b{color:var(--y);font-size:19px}
+.big{font-family:var(--mono);font-size:32px;color:var(--y);font-weight:600;letter-spacing:-.02em;line-height:1.05}
+.biglab{font-family:var(--mono);font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--mu);margin-bottom:5px}
+
+.note{border-left:2px solid var(--br);padding:10px 14px;font-size:12.5px;color:var(--mu);
+      background:var(--s2);border-radius:0 5px 5px 0;margin-top:16px}
+.note.y{border-left-color:var(--y)} .note.am{border-left-color:var(--am);color:var(--am)}
+.note b{color:var(--tx2)}
+
+.stg{display:grid;grid-template-columns:18px 1fr auto;gap:11px;align-items:center;padding:11px 20px;
+     border-bottom:1px solid var(--s3);font-size:13.5px}
+.stg:last-child{border-bottom:none}
+.stg .d{width:8px;height:8px;border-radius:50%;background:var(--br);justify-self:center}
+.stg.act .d{background:var(--y);box-shadow:0 0 0 3px var(--ydim)}
+.stg.ok .d{background:var(--gr)} .stg.skip .d{background:transparent;border:1px dashed var(--di)}
+.stg.skip{color:var(--di)} .stg .m{font-family:var(--mono);font-size:11px;color:var(--di)}
+
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+   color:var(--di);padding:0 14px 8px 0;border-bottom:1px solid var(--br)}
+td{padding:9px 14px 9px 0;border-bottom:1px solid var(--s3);color:var(--tx2)}
+td:first-child{font-family:var(--mono);color:var(--tx)}
+.num{text-align:right;font-family:var(--mono);padding-right:0}
+
+.foot{display:flex;justify-content:space-between;align-items:center;margin-top:26px;padding-top:18px;
+      border-top:1px solid var(--br)}
+.foot .l{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--di)}
+.btn{padding:10px 20px;border-radius:6px;font-size:13.5px;font-weight:600;cursor:pointer;
+     border:1px solid var(--br);background:transparent;color:var(--tx2);font-family:inherit}
+.btn:hover:not(:disabled){border-color:var(--mu)}
+.btn.p{background:var(--y);color:var(--inv);border-color:var(--y)}
+.btn:disabled{opacity:.3;cursor:not-allowed}
+.err{color:var(--re);font-size:12.5px;margin-top:10px;min-height:17px}
+.cmd{font-family:var(--mono);font-size:12px;background:var(--s2);border:1px solid var(--br);border-radius:6px;
+     padding:13px 15px;color:var(--tx2);overflow-x:auto;white-space:pre;margin-top:14px}
+
+/* pipeline picker */
+.picks{display:grid;gap:12px} @media(min-width:820px){.picks{grid-template-columns:repeat(3,1fr)}}
+.pk{text-align:left;padding:20px;border-radius:8px;border:1px solid var(--br);background:var(--s1);
+    cursor:pointer;display:flex;flex-direction:column;font-family:inherit}
+.pk:hover{border-color:var(--mu)}
+.pk.sel{border-color:var(--y);background:var(--ysoft)}
+.pk h3{font-size:16px;font-weight:700;margin:0 0 7px;color:var(--tx);letter-spacing:-.01em}
+.pk p{font-size:12.5px;color:var(--mu);margin:0 0 15px;line-height:1.5;flex:1}
+.pk .pr{font-family:var(--mono);font-size:14px;color:var(--y);font-weight:600}
+.pk .pr small{display:block;font-family:var(--sans);font-size:10.5px;color:var(--di);font-weight:400;margin-top:2px}
+.pk .tag{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+         color:var(--di);margin-bottom:9px}
+</style>
+
+<div class="top">
+  <div class="brand"><small>SSE</small><b>Social Listening</b></div>
+  <nav><a href="#">Explore</a><a href="#" class="on">Ingestions</a></nav>
+  <span class="env dev">dev</span>
+</div>
+
+<div class="page">
+  <div class="crumb">Ingestions · new</div>
+  <h1 id="h1">New ingestion</h1>
+  <p class="sub" id="sub">Pick what you want to run. Each one asks for different things.</p>
+
+  <div class="stepper" id="stepper"><div class="stp on" data-s="1"><span class="n">1</span><span>Choose</span></div><div class="stp" data-s="2"><span class="n">2</span><span>Set up</span></div><div class="stp" data-s="3"><span class="n">3</span><span>Cost</span></div><div class="stp" data-s="4"><span class="n">4</span><span>Running</span></div><div class="stp" data-s="5"><span class="n">5</span><span>Done</span></div></div>
+
+  <!-- 1 · pick -->
+  <section id="s1" class="on">
+    <div class="picks"><button class="pk" data-pipe="reference">
+          <div class="tag">no ai</div>
+          <h3>Track accounts you know</h3><p>Pull recent posts from accounts you already follow, tagged by niche so you can see what each group is publishing.</p>
+          <div class="pr">$1.20<small>per account</small></div>
+          </button><button class="pk" data-pipe="creators">
+          <div class="tag">ai analysis</div>
+          <h3>Find new creators</h3><p>Search a market for creators you do not have yet, and analyse how they look and what they post.</p>
+          <div class="pr">$61 – $118<small>per country</small></div>
+          </button><button class="pk" data-pipe="trends">
+          <div class="tag">no ai</div>
+          <h3>What's trending</h3><p>The hashtags, sounds, creators and videos getting traction in a market right now.</p>
+          <div class="pr">$0.06 – $1.50<small>per hashtag, or per country</small></div>
+          </button></div>
+    <div class="note" id="pnote" style="display:none"></div>
+    <div class="foot"><span class="l" id="f1">Nothing selected</span>
+      <button class="btn p" id="n1" disabled>Next step</button></div>
+  </section>
+
+  <!-- 2 · set up -->
+  <section id="s2">
+    <div class="grid2">
+      <div class="card"><h2 id="c2h">Set up</h2><div class="body">
+        <div class="field"><label class="f">Run title <em>required</em></label>
+          <input type="text" id="title" placeholder="Gulf beauty refresh — August" autocomplete="off">
+          <div class="help">How this run appears in history.</div></div>
+
+        <div class="field" id="f-country"><label class="f">Countries <em>required</em></label>
+          <select id="country"><option value="">Add a country…</option><option value="AE">AE — United Arab Emirates</option><option value="SA">SA — Saudi Arabia</option><option value="EG">EG — Egypt</option><option value="KW">KW — Kuwait</option><option value="QA">QA — Qatar</option><option value="BH">BH — Bahrain</option><option value="OM">OM — Oman</option><option value="JO">JO — Jordan</option><option value="LB">LB — Lebanon</option><option value="MA">MA — Morocco</option><option value="DZ">DZ — Algeria</option><option value="TN">TN — Tunisia</option><option value="TR">TR — Turkey</option><option value="NG">NG — Nigeria</option><option value="ZA">ZA — South Africa</option><option value="KE">KE — Kenya</option><option value="GH">GH — Ghana</option><option value="BR">BR — Brazil</option><option value="MX">MX — Mexico</option><option value="CO">CO — Colombia</option><option value="AR">AR — Argentina</option><option value="CL">CL — Chile</option><option value="PE">PE — Peru</option><option value="US">US — United States</option><option value="CA">CA — Canada</option><option value="GB">GB — United Kingdom</option><option value="FR">FR — France</option><option value="DE">DE — Germany</option><option value="ES">ES — Spain</option><option value="IT">IT — Italy</option><option value="PL">PL — Poland</option><option value="RU">RU — Russia</option><option value="AM">AM — Armenia</option><option value="KZ">KZ — Kazakhstan</option><option value="ID">ID — Indonesia</option><option value="PH">PH — Philippines</option><option value="TH">TH — Thailand</option><option value="VN">VN — Vietnam</option><option value="MY">MY — Malaysia</option><option value="SG">SG — Singapore</option><option value="IN">IN — India</option><option value="PK">PK — Pakistan</option><option value="BD">BD — Bangladesh</option><option value="JP">JP — Japan</option><option value="KR">KR — South Korea</option><option value="AU">AU — Australia</option><option value="NZ">NZ — New Zealand</option></select>
+          <div class="help">Add as many as you like — one run covers every country listed.</div>
+          <div class="chips" id="ctryChips"></div></div>
+
+        <div class="field" id="f-plat"><label class="f">Platforms</label>
+          <div class="seg" id="plat"><button data-v="tiktok" class="on">TikTok</button>
+          <button data-v="instagram" class="on">Instagram</button></div>
+          <div class="help">Both on — click one off to pull from the other only.</div></div>
+
+        <div class="field" id="f-accts"><label class="f">Accounts <em>required</em></label>
+          <textarea id="accts" placeholder="https://www.tiktok.com/@shams.hd&#10;https://www.instagram.com/layan.noor/&#10;@nour.k"></textarea>
+          <div class="help">One per line. Profile links or @handles, TikTok and Instagram both work.</div></div>
+
+        <div class="field" id="f-tags"><label class="f">Hashtags <i>optional</i></label>
+          <input type="text" id="tags" placeholder="grwm, beautytok, skincare" autocomplete="off">
+          <div class="help" id="tagHelp"></div>
+          <div class="chips" id="tagChips"></div></div>
+      </div></div>
+
+      <div class="card" id="c-niche"><h2>Niches <span id="nCount"></span></h2><div class="body">
+        <div class="field"><label class="f">Add a niche <i>or pick an existing one</i></label>
+          <div style="display:flex;gap:8px">
+            <select id="nicheSel" style="flex:1"><option value="">Existing niche…</option><option value="music_dance">music_dance</option><option value="cooking_mum">cooking_mum</option><option value="adhd_wellness">adhd_wellness</option><option value="yerevan_lifestyle">yerevan_lifestyle</option><option value="spirituality">spirituality</option><option value="comedy_skits">comedy_skits</option><option value="heritage_diaspora">heritage_diaspora</option><option value="trading">trading</option><option value="buchona_beauty">buchona_beauty</option><option value="buchona_lifestyle">buchona_lifestyle</option><option value="polymarket">polymarket</option><option value="fashion_beauty">fashion_beauty</option><option value="maga">maga</option><option value="ai_content">ai_content</option><option value="travel">travel</option></select>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:9px">
+            <input type="text" id="nicheNew" placeholder="Or type a new one, e.g. gulf_fitness" autocomplete="off">
+            <button class="btn" id="addNiche" style="white-space:nowrap">Add</button>
+          </div>
+          <div class="help">New niches are created when the run starts and can be reused afterwards.</div>
+          <div class="chips" id="nicheChips"></div></div>
+
+        <div class="field" id="acctList" style="display:none">
+          <label class="f">Assign a niche to each account</label>
+          <div id="acctRows"></div>
+          <div class="help">Every account needs one, so the posts land in the right group.</div>
+        </div>
+      </div></div>
+    </div>
+    <div class="err" id="e2"></div>
+    <div class="foot"><span class="l" id="f2"></span>
+      <span><button class="btn" data-go="1">Back</button>
+      <button class="btn p" id="n2" disabled>Next step</button></span></div>
+  </section>
+
+  
+<section id="s3">
+  <div class="grid2">
+    <div class="card"><h2>How much to pull</h2><div class="body">
+      <div class="field"><label class="f" id="depthLab">Posts from each</label>
+        <div class="seg" id="depth"><button data-v="10">10</button><button data-v="25" class="on">25</button>
+        <button data-v="50">50</button><button data-v="100">100</button></div>
+        <div class="help">More posts gives a better read and costs proportionally more.</div></div>
+      <div class="field"><label class="f">How far back</label>
+        <div class="seg" id="rec"><button data-v="7">7 days</button><button data-v="14" class="on">14 days</button>
+        <button data-v="30">30 days</button><button data-v="0">No limit</button></div></div>
+    </div></div>
+    <div class="card"><h2>Estimate <span>before you start</span></h2><div class="body">
+      <div class="biglab">Total cost</div><div class="big" id="eCost">$0.00</div>
+      <div class="est" id="eLines" style="margin-top:18px"></div>
+      <div class="note" id="eNote"></div>
+    </div></div>
+  </div>
+  <div class="foot"><span class="l" id="f3"></span>
+    <span><button class="btn" data-go="2">Back</button>
+    <button class="btn p" data-go="4">Start run</button></span></div>
+</section>
+
+  <!-- running -->
+  <section id="s4">
+    <div class="grid2">
+      <div class="card"><h2>Sources <span id="srcCount"></span></h2>
+        <div class="body" style="padding:0"><div id="srcTable" style="padding:6px 20px 14px"></div></div></div>
+      <div class="card"><h2>Stages</h2><div class="body" style="padding:0"><div id="stages"></div></div></div>
+    </div>
+    <div class="note y" style="margin-top:18px"><b>Runs on Jenkins.</b>
+      These are the job parameters the platform sends. Results are written back to
+      Supabase and the request row carries the status, so the UI polls the database
+      rather than the build log.</div>
+    <div class="cmd" id="cmd"></div>
+    <div class="foot"><span class="l">running</span>
+      <button class="btn p" data-go="5">Complete</button></div>
+  </section>
+
+  <!-- done -->
+  <section id="s5">
+    <div class="card"><h2>Result</h2><div class="body">
+      <table><thead><tr><th>Measure</th><th class="num">Value</th></tr></thead>
+      <tbody id="doneRows"></tbody></table>
+      <div class="note y" style="margin-top:16px"><b>Everything is saved.</b>
+        Accounts, posts and media are in the database and tagged with the niches you set.</div>
+    </div></div>
+    <div class="foot"><span class="l">complete</span>
+      <button class="btn" data-go="1">Back to ingestions</button></div>
+  </section>
+</div>
+
+<script>
+const DEV = true;
+const STEP_RUN  = DEV ? 4 : 3;
+const STEP_DONE = DEV ? 5 : 4;
+
+// Each pipeline asks for different things. A field that a pipeline cannot use
+// is not disabled - it is not shown, because an irrelevant field still reads as
+// a question you are expected to answer.
+const PIPE = {
+  reference:{ title:'Track accounts you know', head:'Which accounts?',
+    sub:'Paste the accounts you follow and tag each one with a niche. No country needed — these are accounts you already have.',
+    fields:['title','plat','accts','niche'], ai:false, unit:'account', ref:{d:25,p:1.20} },
+  creators:{ title:'Find new creators', head:'Where should we search?',
+    sub:'Choose the markets to search. Hashtags help us find the right kind of creator — leave blank to use the usual ones.',
+    fields:['title','country','plat','tags'], ai:true, unit:'creator', ref:{d:25,p:61.20},
+    tagHelp:'Leave blank to use the standard set for that market.' },
+  trends:{ title:"What's trending", head:'Where should we look?',
+    sub:'Choose the markets. Add hashtags to narrow it to a topic, or leave blank for whatever is trending there.',
+    fields:['title','country','tags'], ai:false, unit:'hashtag', ref:{d:15,p:0.06},
+    tagHelp:'Leave blank to see everything trending in that country.' }
+};
+
+const CREATORS_PER_MARKET=200, IMAGES_PER_CREATOR=20, TRENDS_COUNTRY=1.50;
+let S={pipe:null,step:1,depth:25,rec:14,countries:[],plats:['tiktok','instagram'],niches:[],acctNiche:{}};
+const $=id=>document.getElementById(id);
+
+function show(n){
+  if(n>S.step && !ok(S.step)) return;
+  S.step=n;
+  document.querySelectorAll('section').forEach(x=>x.classList.remove('on'));
+  $('s'+n).classList.add('on');
+  document.querySelectorAll('.stp').forEach(e=>{
+    const i=+e.dataset.s; e.classList.toggle('on',i===n); e.classList.toggle('ok',i<n); });
+  if(DEV && n===3) est();
+  if(n===STEP_RUN) runView();
+  if(n===STEP_DONE) doneView();
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+function accts(){
+  return ($('accts').value||'').split(/[\n,]+/).map(s=>s.trim()).filter(Boolean).map(l=>{
+    const m=l.match(/(?:https?:\/\/)?(?:www\.)?(tiktok|instagram)\.com\/(?:@)?([A-Za-z0-9._-]+)/i);
+    if(m) return {p:/^ti/i.test(m[1])?'TT':'IG',h:m[2].toLowerCase()};
+    const h=l.replace(/^@/,'');
+    return /^[A-Za-z0-9._-]{2,}$/.test(h)?{p:'TT',h:h.toLowerCase()}:{bad:l};
+  });
+}
+const tags=()=>($('tags').value||'').split(/[\s,]+/).map(s=>s.trim().replace(/^#/,'').toLowerCase()).filter(Boolean);
+
+function ok(step){
+  if(step===1) return !!S.pipe;
+  if(step===2){
+    const p=PIPE[S.pipe],e=[];
+    if(!$('title').value.trim()) e.push('Give the run a title.');
+    if(p.fields.includes('country') && !S.countries.length) e.push('Add at least one country.');
+    if(p.fields.includes('accts')){
+      const a=accts();
+      if(!a.filter(x=>!x.bad).length) e.push('Add at least one account.');
+      else if(a.some(x=>x.bad)) e.push('Some lines are not valid accounts.');
+      else if(!S.niches.length) e.push('Add at least one niche.');
+      else if(a.filter(x=>!x.bad).some(x=>!S.acctNiche[x.h])) e.push('Every account needs a niche.');
+    }
+    $('e2').textContent=e.join(' ');
+    return !e.length;
+  }
+  return true;
+}
+
+function counts(){
+  const a=accts().filter(x=>!x.bad), t=tags();
+  if(S.pipe==='reference') return {n:a.length,word:'account'};
+  if(S.pipe==='trends')    return {n:(t.length||40)*Math.max(S.countries.length,1),word:'hashtag'};
+  return {n:CREATORS_PER_MARKET*Math.max(S.countries.length,1),word:'creator'};
+}
+
+function est(){
+  const p=PIPE[S.pipe], c=counts(), f=S.depth/p.ref.d;
+  let total,posts,images=0;
+  if(S.pipe==='trends' && !tags().length){
+    total=TRENDS_COUNTRY*f*Math.max(S.countries.length,1); posts=c.n*S.depth;
+  } else {
+    total=(S.pipe==='creators'? p.ref.p*Math.max(S.countries.length,1) : c.n*p.ref.p)*f;
+    posts=c.n*S.depth;
+  }
+  if(p.ai) images=c.n*Math.min(S.depth,IMAGES_PER_CREATOR);
+  const ai=p.ai?total*0.725:0, coll=total-ai;
+  const mins=2+(posts*0.9)/60+(images*0.35)/60;
+
+  $('eCost').textContent='$'+total.toFixed(2);
+  const rows=[[`~${c.n.toLocaleString()} ${c.word}${c.n===1?'':'s'} × ${S.depth} posts`,posts.toLocaleString()+' posts'],
+              ['Collecting posts','$'+coll.toFixed(2)]];
+  if(p.ai) rows.push([`Analysing ~${images.toLocaleString()} images`,'$'+ai.toFixed(2)]);
+  rows.push(['Expected time',mins<60?Math.max(2,Math.round(mins))+' min':(mins/60).toFixed(1)+' hrs']);
+  $('eLines').innerHTML=rows.map(([a,b])=>`<div class="row"><span>${a}</span><b>${b}</b></div>`).join('')
+    +`<div class="row tot"><span>Total</span><b>$${total.toFixed(2)}</b></div>`;
+  $('eNote').innerHTML=p.ai
+    ?'<b>Around two thirds of this is the AI analysis.</b> A market usually returns 150–320 creators, so we assume 200. Accounts we have seen before are skipped, so repeat runs cost less.'
+    :'<b>No AI analysis in this one.</b> You are paying for collection only.';
+  $('f3').textContent=`${c.n} ${c.word}s · ${S.depth} posts each`;
+}
+
+// What the platform sends to Jenkins. The console does not run anything - it
+// produces the exact job parameters, so the wiring is a matter of POSTing these
+// to Jenkins with a REQUEST_ID and then polling the request row.
+const JENKINS_JOB = 'social-listening-scrapers';
+
+function jenkinsParams(){
+  const a=accts().filter(x=>!x.bad), t=tags();
+  const plat = S.plats.length===2 ? 'both' : (S.plats[0]||'both');
+  const P = { TITLE: $('title').value.trim() };
+
+  if(S.pipe==='reference'){
+    P.SCRAPER_TYPE = 'reference_profiles';
+    // one entry per account: the URL carries its platform, the niche follows it
+    P.ACCOUNTS = a.map(x=>
+      `${x.p==='TT'?'https://www.tiktok.com/@':'https://www.instagram.com/'}${x.h}=${S.acctNiche[x.h]||''}`
+    ).join(',');
+    if(S.countries.length) P.REGION = S.countries[0];
+    if(S.plats.length===1) P.PLATFORM = plat;
+    P.POSTS_PER_ACCOUNT = String(S.depth);
+    if(S.rec) P.RECENCY_DAYS = String(S.rec);
+
+  } else if(S.pipe==='creators'){
+    P.SCRAPER_TYPE = 'creator_intelligence';
+    P.MARKET = S.countries[0] || '';
+    P.PLATFORM = plat;
+    P.POSTS_PER_CREATOR = String(S.depth);
+    if(t.length) P.TAGS = t.join(',');
+
+  } else {
+    P.SCRAPER_TYPE = 'weekly_trends';
+    P.MARKETS = S.countries.join(',');
+    if(t.length) P.TAGS = t.join(',');          // blank = everything trending
+    P.POSTS_PER_TAG = String(S.depth);
+    if(S.rec) P.RECENCY_DAYS = String(S.rec);
+    P.BOARD_DAYS = '7';
+  }
+  return P;
+}
+
+function cmd(){
+  // NL rather than an escape: this file is generated, and a backslash-n in the
+  // template survives the generator as a real newline instead of an escape.
+  const NL = String.fromCharCode(10);
+  const P = jenkinsParams();
+  const w = Math.max.apply(null, Object.keys(P).concat(['REQUEST_ID']).map(k=>k.length));
+  const out = [];
+  out.push('JOB   ' + JENKINS_JOB);
+  out.push('  ' + 'REQUEST_ID'.padEnd(w) + ' = <uuid of the row you just created>');
+  Object.keys(P).forEach(k => out.push('  ' + k.padEnd(w) + ' = ' + P[k]));
+  out.push('');
+  out.push('# POST /job/' + JENKINS_JOB + '/buildWithParameters');
+  out.push('# then poll the request row until status is success or failed');
+  return out.join(NL);
+}
+
+function runView(){
+  const p=PIPE[S.pipe], a=accts().filter(x=>!x.bad), t=tags();
+  const rows=[];
+  a.forEach(x=>rows.push([x.p,'@'+x.h,S.acctNiche[x.h]||'—','done']));
+  t.forEach(x=>rows.push(['#','#'+x,'—','fetching']));
+  if(!rows.length) S.countries.forEach(c=>rows.push(['·',c,'—','fetching']));
+  $('srcCount').textContent=rows.length+' total';
+  $('srcTable').innerHTML=`<table><thead><tr><th>Source</th><th>Niche</th><th class="num">Status</th></tr></thead><tbody>`
+    +rows.map(([p1,n,ni,st])=>`<tr><td><b style="color:var(--y)">${p1}</b> ${n}</td><td>${ni}</td><td class="num" style="color:${st==='done'?'var(--gr)':'var(--y)'}">${st}</td></tr>`).join('')
+    +`</tbody></table>`;
+  const stages=[['Checking sources',true],['Collecting posts',true],['Saving media',true],
+                ['Analysing appearance',p.ai],['Building your results',true]];
+  $('stages').innerHTML=stages.map(([n,on],i)=>
+    `<div class="stg ${on?(i<1?'ok':(i===1?'act':'')):'skip'}"><span class="d"></span><span>${n}</span>
+     <span class="m">${on?(i<1?'0:04':(i===1?'running':'waiting')):'not needed'}</span></div>`).join('');
+  $('cmd').textContent=cmd();
+}
+
+function doneView(){
+  const c=counts(), a=accts().filter(x=>!x.bad);
+  const posts=c.n*S.depth;
+  const rows=[['Sources processed',c.n],['Posts collected',posts.toLocaleString()],
+              ['Niches used',S.niches.length||'—'],
+              ['Accounts added',a.length||'—'],
+              ['Countries',S.countries.join(', ')||'—']];
+  if(PIPE[S.pipe].ai) rows.push(['Images analysed',(c.n*Math.min(S.depth,IMAGES_PER_CREATOR)).toLocaleString()]);
+  $('doneRows').innerHTML=rows.map(([a1,b])=>`<tr><td>${a1}</td><td class="num">${b}</td></tr>`).join('');
+}
+
+// niche chips
+function drawNiches(){
+  $('nicheChips').innerHTML=S.niches.map(n=>
+    `<span class="chip ${NICHE_EXISTING.includes(n)?'':'new'}">${n}${NICHE_EXISTING.includes(n)?'':' · new'}
+     <span class="x" data-rm="${n}">✕</span></span>`).join('');
+  $('nCount').textContent=S.niches.length?S.niches.length+' selected':'';
+  drawAccts();
+}
+function drawAccts(){
+  const a=accts().filter(x=>!x.bad);
+  $('acctList').style.display=(a.length&&S.niches.length)?'block':'none';
+  $('acctRows').innerHTML=a.map(x=>
+    `<div class="acct"><span class="who"><b>${x.p}</b>@${x.h}</span>
+     <select data-h="${x.h}">${['<option value="">Pick a niche…</option>']
+       .concat(S.niches.map(n=>`<option value="${n}" ${S.acctNiche[x.h]===n?'selected':''}>${n}</option>`)).join('')}</select>
+     <span class="rm">·</span></div>`).join('');
+  $('acctRows').querySelectorAll('select').forEach(sel=>sel.onchange=()=>{
+    S.acctNiche[sel.dataset.h]=sel.value; $('n2').disabled=!ok(2); });
+}
+const NICHE_EXISTING=["music_dance", "cooking_mum", "adhd_wellness", "yerevan_lifestyle", "spirituality", "comedy_skits", "heritage_diaspora", "trading", "buchona_beauty", "buchona_lifestyle", "polymarket", "fashion_beauty", "maga", "ai_content", "travel"];
+
+document.querySelectorAll('.pk').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.pk').forEach(x=>x.classList.remove('sel'));
+  b.classList.add('sel'); S.pipe=b.dataset.pipe;
+  const p=PIPE[S.pipe];
+  $('n1').disabled=false; $('f1').textContent=p.title;
+  $('pnote').style.display='block';
+  $('pnote').className='note '+(p.ai?'am':'y');
+  $('pnote').innerHTML=p.ai
+    ?'<b>This one uses AI.</b> We stop looking at an account as soon as we can tell what they look like, and give up entirely if the first few images show no one.'
+    :'<b>No AI analysis.</b> Collection only, so it is the cheaper option.';
+  $('c2h').textContent=p.head; $('sub').textContent=p.sub;
+  ['country','plat','accts','tags'].forEach(f=>
+    $('f-'+f).style.display=p.fields.includes(f)?'block':'none');
+  $('c-niche').style.display=p.fields.includes('niche')?'block':'none';
+  if(p.tagHelp) $('tagHelp').textContent=p.tagHelp;
+  if(DEV) $('depthLab').textContent='Posts from each '+p.unit;
+});
+
+document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>show(+b.dataset.go));
+$('n1').onclick=()=>show(2);
+$('n2').onclick=()=>show(DEV?3:STEP_RUN);
+
+$('country').onchange=()=>{
+  const v=$('country').value; if(v&&!S.countries.includes(v)) S.countries.push(v);
+  $('country').value='';
+  $('ctryChips').innerHTML=S.countries.map(c=>
+    `<span class="chip"><b>${c}</b><span class="x" data-c="${c}">✕</span></span>`).join('');
+  $('ctryChips').querySelectorAll('[data-c]').forEach(x=>x.onclick=()=>{
+    S.countries=S.countries.filter(y=>y!==x.dataset.c); $('country').onchange(); });
+  $('n2').disabled=!ok(2);
+};
+document.querySelectorAll('#plat button').forEach(b=>b.onclick=()=>{
+  b.classList.toggle('on');
+  S.plats=[...document.querySelectorAll('#plat button.on')].map(x=>x.dataset.v); });
+
+$('addNiche').onclick=()=>{
+  const v=($('nicheNew').value||$('nicheSel').value||'').trim().toLowerCase().replace(/\s+/g,'_');
+  if(v&&!S.niches.includes(v)) S.niches.push(v);
+  $('nicheNew').value=''; $('nicheSel').value=''; drawNiches(); $('n2').disabled=!ok(2);
+};
+$('nicheSel').onchange=()=>$('addNiche').click();
+$('nicheChips').onclick=e=>{ const n=e.target.dataset.rm; if(!n)return;
+  S.niches=S.niches.filter(x=>x!==n); drawNiches(); $('n2').disabled=!ok(2); };
+
+['title','accts','tags'].forEach(id=>$(id).addEventListener('input',()=>{
+  $('tagChips').innerHTML=tags().map(t=>`<span class="chip">#${t}</span>`).join('');
+  drawAccts(); $('n2').disabled=!ok(2);
+  const a=accts(); const bad=a.filter(x=>x.bad).length;
+  $('f2').textContent=(a.length-bad)+' source'+((a.length-bad)===1?'':'s')+(bad?` · ${bad} not recognised`:'');
+}));
+
+if(DEV){
+  document.querySelectorAll('#depth button').forEach(b=>b.onclick=()=>{
+    document.querySelectorAll('#depth button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on'); S.depth=+b.dataset.v; est(); });
+  document.querySelectorAll('#rec button').forEach(b=>b.onclick=()=>{
+    document.querySelectorAll('#rec button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on'); S.rec=+b.dataset.v; est(); });
+}
+</script>
