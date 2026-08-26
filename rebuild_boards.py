@@ -59,19 +59,21 @@ def main():
     by_country = {}
     if not a.from_market_code:
         import src.run_archive as A
-        from src.storage.minio import get_minio
-        mc = get_minio()
         pref = f"runs/tiktok/{a.archive_date}/" if a.archive_date else "runs/tiktok/"
         # a run that crosses midnight lands under two dates; both are ours
         found = 0
-        for o in mc.list_objects(A.RUNS_BUCKET, prefix=pref, recursive=True):
-            if not o.object_name.endswith("/clips.json"):
+        # Through run_archive, not the client directly — under Wasabi the archive
+        # is a prefix inside a shared bucket, and listing the logical bucket name
+        # comes back empty instead of erroring, so the rebuild would quietly find
+        # no archives and fall back to the wrong attribution.
+        for name in A.list_archive(pref):
+            if not name.endswith("/clips.json"):
                 continue
-            country = o.object_name.split("/")[-2].upper()
+            country = name.split("/")[-2].upper()
             try:
-                rows = json.loads(mc.get_object(A.RUNS_BUCKET, o.object_name).read())
+                rows = A.read_json(name)
             except Exception as e:
-                log.warning(f"  unreadable archive {o.object_name}: {str(e)[:60]}")
+                log.warning(f"  unreadable archive {name}: {str(e)[:60]}")
                 continue
             bucket = by_country.setdefault(country, {})
             for r in rows:

@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from src.db.client import get_db, upsert
-from src.storage.minio import get_minio, profile_pic_path
+from src.storage.minio import profile_pic_path
 from src.utils.logger import get_logger
 import src.run_archive as A
 
@@ -29,16 +29,18 @@ log = get_logger(__name__)
 
 def read_archive(date_prefix=None):
     """Every profile JSON the harvest wrote, newest wins on duplicates."""
-    mc = get_minio()
     pref = f"runs/tiktok/{date_prefix}/" if date_prefix else "runs/tiktok/"
     out, files = {}, 0
-    for o in mc.list_objects(A.RUNS_BUCKET, prefix=pref, recursive=True):
-        if "/profiles/" not in o.object_name or not o.object_name.endswith(".json"):
+    # Through run_archive, not the client directly — the archive is a bucket
+    # under MinIO and a prefix under Wasabi, and listing the logical name
+    # against the wrong one returns nothing rather than failing.
+    for name in A.list_archive(pref):
+        if "/profiles/" not in name or not name.endswith(".json"):
             continue
         try:
-            doc = json.loads(mc.get_object(A.RUNS_BUCKET, o.object_name).read())
+            doc = A.read_json(name)
         except Exception as e:
-            log.warning(f"unreadable {o.object_name}: {str(e)[:60]}")
+            log.warning(f"unreadable {name}: {str(e)[:60]}")
             continue
         p = doc.get("profile") or {}
         u = (p.get("username") or "").lower()

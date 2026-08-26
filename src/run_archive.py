@@ -104,6 +104,28 @@ def exists(path: str, bucket: str) -> bool:
         return False
 
 
+def list_archive(prefix: str, bucket: str = None) -> list:
+    """Object keys under `prefix`, returned as LOGICAL paths.
+
+    Readers (load_creators, rebuild_boards) used to call list_objects() on
+    RUNS_BUCKET themselves. That is the *logical* name, which is only a real
+    bucket under MinIO — on Wasabi the archive sits under a prefix inside a
+    shared bucket, so the listing came back empty and a rebuild silently found
+    nothing to rebuild from. Stripping the namespace back off means callers keep
+    parsing the paths they have always parsed.
+    """
+    b, full = resolve(bucket or RUNS_BUCKET, prefix)
+    cut = len(full) - len(prefix.lstrip("/"))
+    return [o.object_name[cut:] for o in
+            get_minio().list_objects(b, prefix=full, recursive=True)]
+
+
+def read_json(path: str, bucket: str = None):
+    """Read one archived JSON document by its logical path."""
+    b, key = resolve(bucket or RUNS_BUCKET, path)
+    return json.loads(get_minio().get_object(b, key).read())
+
+
 def download(url: str) -> bytes:
     if not url:
         return None

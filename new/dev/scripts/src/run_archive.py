@@ -32,8 +32,19 @@ from src.utils.logger import get_logger
 
 log = get_logger(__name__)
 
-RUNS_BUCKET  = os.environ.get("TRENDS_BUCKET", "trends")
-MEDIA_BUCKET = os.environ.get("MINIO_BUCKET", "social-intel")
+# Bucket names follow whichever object store is configured (see
+# src/storage/minio.py). They stay overridable per-store because the Wasabi
+# account's buckets are not guaranteed to be named the same as MinIO's, and a
+# key scoped to the wrong bucket fails at write time rather than at startup.
+from src.storage.minio import (OBJECT_STORE, bucket_name, namespaced, resolve,
+                               MEDIA_LOGICAL, RUNS_LOGICAL)
+
+# LOGICAL names. resolve() maps them onto whatever physical bucket is configured
+# — one bucket each under MinIO, or a prefix each inside a shared bucket under
+# Wasabi. Setting these to the physical name instead silently broke exists(),
+# which is the check that stops us paying to re-fetch a picture we already hold.
+RUNS_BUCKET  = RUNS_LOGICAL
+MEDIA_BUCKET = MEDIA_LOGICAL
 
 _DL_HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                              "AppleWebKit/537.36"}
@@ -45,22 +56,26 @@ def run_prefix(platform: str, country: str, when: datetime = None) -> str:
 
 
 def _ensure(bucket: str) -> None:
+    # When everything shares one physical bucket there is nothing to create, and
+    # a key without CreateBucket rights would only log a misleading warning.
+    if namespaced():
+        return
     mc = get_minio()
     try:
         if not mc.bucket_exists(bucket):
             mc.make_bucket(bucket)
-            log.info(f"created MinIO bucket '{bucket}'")
+            log.info(f"created bucket '{bucket}'")
     except Exception as e:
         log.warning(f"bucket check failed for {bucket}: {str(e)[:80]}")
 
 
 def put_json(path: str, obj, bucket: str = None) -> str:
     """Write a JSON document. default=str so datetimes never break an archive."""
-    bucket = bucket or RUNS_BUCKET
+    bucket, key = resolve(bucket or RUNS_BUCKET, path)
     _ensure(bucket)
     data = json.dumps(obj, ensure_ascii=False, indent=2, default=str).encode("utf-8")
     try:
-        get_minio().put_object(bucket, path, io.BytesIO(data), length=len(data),
+        get_minio().put_object(bucket, key, io.BytesIO(data), length=len(data),
                                content_type="application/json")
         return path
     except Exception as e:
@@ -69,10 +84,10 @@ def put_json(path: str, obj, bucket: str = None) -> str:
 
 
 def put_bytes(path: str, data: bytes, content_type: str, bucket: str = None) -> str:
-    bucket = bucket or MEDIA_BUCKET
+    bucket, key = resolve(bucket or MEDIA_BUCKET, path)
     _ensure(bucket)
     try:
-        get_minio().put_object(bucket, path, io.BytesIO(data), length=len(data),
+        get_minio().put_object(bucket, key, io.BytesIO(data), length=len(data),
                                content_type=content_type)
         return path
     except Exception as e:
@@ -81,11 +96,34 @@ def put_bytes(path: str, data: bytes, content_type: str, bucket: str = None) -> 
 
 
 def exists(path: str, bucket: str) -> bool:
+    bucket, key = resolve(bucket, path)
     try:
-        get_minio().stat_object(bucket, path)
+        get_minio().stat_object(bucket, key)
         return True
     except Exception:
         return False
+
+
+def list_archive(prefix: str, bucket: str = None) -> list:
+    """Object keys under `prefix`, returned as LOGICAL paths.
+
+    Readers (load_creators, rebuild_boards) used to call list_objects() on
+    RUNS_BUCKET themselves. That is the *logical* name, which is only a real
+    bucket under MinIO — on Wasabi the archive sits under a prefix inside a
+    shared bucket, so the listing came back empty and a rebuild silently found
+    nothing to rebuild from. Stripping the namespace back off means callers keep
+    parsing the paths they have always parsed.
+    """
+    b, full = resolve(bucket or RUNS_BUCKET, prefix)
+    cut = len(full) - len(prefix.lstrip("/"))
+    return [o.object_name[cut:] for o in
+            get_minio().list_objects(b, prefix=full, recursive=True)]
+
+
+def read_json(path: str, bucket: str = None):
+    """Read one archived JSON document by its logical path."""
+    b, key = resolve(bucket or RUNS_BUCKET, path)
+    return json.loads(get_minio().get_object(b, key).read())
 
 
 def download(url: str) -> bytes:
