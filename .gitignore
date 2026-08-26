@@ -10,3 +10,9 @@ build/
 venv/
 *.db
 *.sqlite
+
+# Per-run outputs and timestamped backups — noise, not source
+run-*.json
+logs/
+*.bak-*
+*.bak_*

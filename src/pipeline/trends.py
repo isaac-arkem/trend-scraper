@@ -77,18 +77,26 @@ def _download(url: str) -> Optional[bytes]:
 
 
 def _put(path: str, data: bytes, content_type: str) -> Optional[str]:
+    # Addressed TRENDS_BUCKET directly, which bypassed the store routing and
+    # silently AccessDenied'd every clip upload for a whole sweep — 419 clip rows
+    # were written with no media behind them. resolve() sends it wherever the
+    # configured store actually is, and is a no-op when they already match.
+    from src.storage.minio import resolve
+    bucket, key = resolve(TRENDS_BUCKET, path)
     try:
-        get_minio().put_object(TRENDS_BUCKET, path, io.BytesIO(data), length=len(data),
+        get_minio().put_object(bucket, key, io.BytesIO(data), length=len(data),
                                content_type=content_type)
         return path
     except Exception as e:
-        log.warning(f"MinIO put failed ({path}): {str(e)[:70]}")
+        log.warning(f"object put failed ({bucket}/{key}): {str(e)[:70]}")
         return None
 
 
 def _exists(path: str) -> bool:
+    from src.storage.minio import resolve
+    bucket, key = resolve(TRENDS_BUCKET, path)
     try:
-        get_minio().stat_object(TRENDS_BUCKET, path)
+        get_minio().stat_object(bucket, key)
         return True
     except Exception:
         return False

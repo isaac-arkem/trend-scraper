@@ -21,11 +21,10 @@ def serve_minio():
     if not path:
         return _placeholder()
     try:
-        from src.storage.minio import get_minio
-        import os
+        from src.storage.minio import get_minio, resolve, MEDIA_LOGICAL
         mc = get_minio()
-        bucket = os.environ.get("MINIO_BUCKET", "social-intel")
-        obj = mc.get_object(bucket, path)
+        bucket, key = resolve(MEDIA_LOGICAL, path)
+        obj = mc.get_object(bucket, key)
         data = obj.read()
         ct = obj.headers.get("content-type", "image/jpeg")
         return Response(data, content_type=ct,
@@ -61,9 +60,9 @@ def trend_file():
     path = request.args.get("p", "")
     if not path:
         return _placeholder()
-    from src.storage.minio import get_minio
+    from src.storage.minio import get_minio, resolve, RUNS_LOGICAL
     mc = get_minio()
-    bucket = os.environ.get("TRENDS_BUCKET", "trends")
+    bucket, path = resolve(RUNS_LOGICAL, path)
     try:
         st = mc.stat_object(bucket, path)
         size = st.size
@@ -491,6 +490,111 @@ def api_signals_coverage():
 
 
 # ── serve React app ──────────────────────────────────────────────────────────
+
+# ── reference profiles gallery ────────────────────────────────────────────────
+# Every reference account with its picture, so a missing or wrong image is
+# visible at a glance instead of being discovered in a meeting. Images come
+# through /img-minio, which resolves whichever bucket the store is currently
+# namespaced into.
+@app.route("/api/profiles")
+def api_profiles():
+    from src.storage.minio import profile_pic_path
+    topic = request.args.get("topic", "")
+    q = (db.table("reference_accounts")
+         .select("id,platform,handle,topic,region,active,profile_pic_url,platform_user_id,scraped_at"))
+    if topic:
+        q = q.eq("topic", topic)
+    rows = q.order("topic").order("handle").execute().data or []
+
+    # Whether a picture EXISTS matters more than whether a path can be built:
+    # a card falling back to the live CDN url looks fine today and goes blank
+    # when that url expires, so "missing" has to mean missing from storage.
+    from src.storage.minio import get_minio, resolve, MEDIA_LOGICAL
+    mc = get_minio()
+    held = set()
+    for o in mc.list_objects(resolve(MEDIA_LOGICAL, "profiles/")[0],
+                             prefix=resolve(MEDIA_LOGICAL, "profiles/")[1], recursive=True):
+        held.add(o.object_name)
+
+    out = []
+    for r in rows:
+        uid = r.get("platform_user_id")
+        stored = None
+        if uid:
+            path = profile_pic_path(r["platform"], uid)
+            if resolve(MEDIA_LOGICAL, path)[1] in held:
+                stored = f"/img-minio?p={path}"
+        out.append({**r, "img": stored, "remote": r.get("profile_pic_url")})
+    topics = sorted({r.get("topic") or "?" for r in rows})
+    return jsonify({"total": len(out), "topics": topics, "profiles": out})
+
+
+@app.route("/profiles")
+def profiles_page():
+    return Response(PROFILES_HTML, content_type="text/html; charset=utf-8")
+
+
+PROFILES_HTML = """<!doctype html><meta charset="utf-8">
+<title>Reference profiles</title>
+<style>
+ :root{--bg:#0f1113;--card:#181b1f;--line:#26292e;--txt:#e8e6e3;--dim:#8b9096;--ok:#4ade80;--no:#f87171}
+ *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--txt);
+   font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+ header{padding:18px 22px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
+ h1{margin:0 0 10px;font-size:17px;font-weight:600;letter-spacing:-.01em}
+ .bar{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+ select,input{background:var(--card);color:var(--txt);border:1px solid var(--line);
+   border-radius:7px;padding:7px 10px;font-size:13px}
+ .stat{color:var(--dim);font-size:13px;font-variant-numeric:tabular-nums}
+ .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px;padding:20px 22px}
+ .card{background:var(--card);border:1px solid var(--line);border-radius:11px;overflow:hidden;
+   display:flex;flex-direction:column}
+ .card img{width:100%;aspect-ratio:1;object-fit:cover;background:#101214;display:block}
+ .meta{padding:9px 10px}
+ .h{font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ .t{color:var(--dim);font-size:11.5px;margin-top:2px}
+ .pill{display:inline-block;font-size:10px;padding:1px 6px;border-radius:20px;
+   border:1px solid var(--line);margin-top:6px;color:var(--dim)}
+ .miss{outline:1px solid var(--no)}
+</style>
+<header>
+  <h1>Reference profiles</h1>
+  <div class="bar">
+    <select id="topic"><option value="">All niches</option></select>
+    <input id="q" placeholder="search handle…" size="18">
+    <label class="stat"><input type="checkbox" id="only"> only missing images</label>
+    <span class="stat" id="stat">loading…</span>
+  </div>
+</header>
+<div class="grid" id="grid"></div>
+<script>
+let ALL=[];
+const el=(s)=>document.querySelector(s);
+function render(){
+  const t=el('#topic').value, q=el('#q').value.toLowerCase(), only=el('#only').checked;
+  const rows=ALL.filter(p=>(!t||p.topic===t)&&(!q||p.handle.toLowerCase().includes(q))&&(!only||!p.img));
+  const nost=ALL.filter(p=>!p.img).length, cdn=ALL.filter(p=>!p.img&&p.remote).length;
+  el('#stat').textContent=`${rows.length} of ${ALL.length} · ${ALL.length-nost} stored · ${cdn} CDN-only (will expire) · ${nost-cdn} no image`;
+  el('#grid').innerHTML=rows.map(p=>{
+    // fall back to the remote CDN url, then to a data-uri placeholder
+    const src=p.img||p.remote||'';
+    return `<div class="card${p.img?'':' miss'}">
+      <img loading="lazy" src="${src}" onerror="this.style.background='#101214';this.removeAttribute('src')">
+      <div class="meta">
+        <div class="h">@${p.handle}</div>
+        <div class="t">${p.topic||'—'} · ${p.region||'—'}</div>
+        <span class="pill">${p.platform}</span>${p.img?'':'<span class="pill" style="border-color:#f87171;color:#f87171">not stored</span>'}
+      </div></div>`;}).join('');
+}
+fetch('/api/profiles').then(r=>r.json()).then(d=>{
+  ALL=d.profiles;
+  el('#topic').innerHTML+=d.topics.map(t=>`<option>${t}</option>`).join('');
+  render();
+});
+['#topic','#q','#only'].forEach(s=>el(s).addEventListener('input',render));
+</script>"""
+
+
 @app.route("/")
 def index():
     return send_file("static/index.html")

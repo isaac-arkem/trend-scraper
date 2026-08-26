@@ -22,10 +22,14 @@ for _n in ("httpx", "httpcore", "urllib3", "apify_client"):
     logging.getLogger(_n).setLevel(logging.WARNING)
 
 from src.db.client import get_db
-from src.storage.minio import get_minio, profile_pic_path
+from src.storage.minio import get_minio, profile_pic_path, resolve, MEDIA_LOGICAL
 from src.apify import instagram as ig, tiktok as tt
 
-BUCKET = os.environ.get("MINIO_BUCKET", "social-intel")
+# Routed through resolve() so this follows OBJECT_STORE like everything else.
+# Addressing MINIO_BUCKET directly kept writing to whatever bucket that env var
+# named, which after the Wasabi move was either the wrong store or a bucket the
+# key cannot write to — failing silently in the same way the clip uploads did.
+BUCKET = MEDIA_LOGICAL   # logical name; resolve() maps it to the real bucket
 BATCH = 100  # usernames per Apify actor run
 DL_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
@@ -43,7 +47,8 @@ def creator_key(c: dict) -> str:
 
 def exists_in_minio(mc, path: str) -> bool:
     try:
-        mc.stat_object(BUCKET, path)
+        _b, _k = resolve(BUCKET, path)
+        mc.stat_object(_b, _k)
         return True
     except Exception:
         return False
@@ -100,7 +105,8 @@ def run_platform(db, mc, platform: str, limit: int = None):
                 missing += 1
                 continue
             path = profile_pic_path(platform, creator_key(c))
-            mc.put_object(BUCKET, path, io.BytesIO(img), length=len(img), content_type="image/jpeg")
+            _b, _k = resolve(BUCKET, path)
+            mc.put_object(_b, _k, io.BytesIO(img), length=len(img), content_type="image/jpeg")
             db.table("creators").update({"profile_pic_url": url}).eq("id", c["id"]).execute()
             saved += 1
         log(f"  {platform}: {saved} saved, {missing} missing ({i+len(batch)}/{len(todo)} processed)")

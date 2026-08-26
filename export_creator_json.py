@@ -16,9 +16,13 @@ import time
 from collections import Counter, defaultdict
 
 from src.db.client import get_db
-from src.storage.minio import get_minio, profile_pic_path
+from src.storage.minio import get_minio, profile_pic_path, resolve, MEDIA_LOGICAL
 
-BUCKET = os.environ.get("MINIO_BUCKET", "social-intel")
+# Routed through resolve() so this follows OBJECT_STORE like everything else.
+# Addressing MINIO_BUCKET directly kept writing to whatever bucket that env var
+# named, which after the Wasabi move was either the wrong store or a bucket the
+# key cannot write to — failing silently in the same way the clip uploads did.
+BUCKET = MEDIA_LOGICAL
 
 # attributes we summarise (single-value vs list-valued)
 SINGLE = ["skin_tone", "hair_color", "hair_length", "hair_texture", "body_frame",
@@ -118,7 +122,8 @@ def main():
         }
         data = json.dumps(dossier, ensure_ascii=False, indent=2).encode("utf-8")
         path = f"profiles/{c['platform']}/{key}.json"
-        mc.put_object(BUCKET, path, io.BytesIO(data), length=len(data), content_type="application/json")
+        _b, _k = resolve(BUCKET, path)
+        mc.put_object(_b, _k, io.BytesIO(data), length=len(data), content_type="application/json")
         written += 1
         if i % 200 == 0:
             log(f"  {i}/{len(creators)} dossiers written")

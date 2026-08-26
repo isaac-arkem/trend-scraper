@@ -19,16 +19,12 @@ except Exception as e:
 # Test MinIO
 try:
     from minio import Minio
-    endpoint = os.environ["MINIO_ENDPOINT"].replace("http://", "").replace("https://", "")
-    secure = os.environ["MINIO_ENDPOINT"].startswith("https://")
-    mc = Minio(
-        endpoint,
-        access_key=os.environ["MINIO_ACCESS_KEY"],
-        secret_key=os.environ["MINIO_SECRET_KEY"],
-        secure=secure,
-        region="eu-south-1",
-    )
-    bucket = os.environ.get("MINIO_BUCKET", "social-intel")
+    # Test whatever store is configured, not MinIO specifically — after the
+    # Wasabi move a green MinIO check said nothing about where data goes.
+    from src.storage.minio import get_minio, bucket_name, OBJECT_STORE
+    client = get_minio()
+    bucket = bucket_name()
+    print(f"  store: {OBJECT_STORE} -> {bucket}")
     if not mc.bucket_exists(bucket):
         mc.make_bucket(bucket)
         print(f"✓ MinIO      bucket '{bucket}' created")

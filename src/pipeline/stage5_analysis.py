@@ -177,15 +177,18 @@ def analyze_asset(asset: dict) -> Optional[dict]:
         if not result and frames:
             result = analyze_image_bytes(frames[0])
     else:
-        # Image or carousel frame — try MinIO first, fall back to original URL
+        # Image or carousel frame — try object storage first, fall back to the URL
         image_bytes = None
         if asset.get("minio_path"):
             try:
-                from src.storage.minio import get_minio
-                import os as _os
+                from src.storage.minio import get_minio, resolve, MEDIA_LOGICAL
                 mc = get_minio()
-                bucket = _os.environ.get("MINIO_BUCKET", "social-intel")
-                obj = mc.get_object(bucket, asset["minio_path"])
+                # resolve() follows OBJECT_STORE. Reading straight from
+                # MINIO_BUCKET meant that once media moved to Wasabi this found
+                # nothing, silently fell through to re-downloading every image
+                # from the platform CDN, and paid for links that have expired.
+                bucket, key = resolve(MEDIA_LOGICAL, asset["minio_path"])
+                obj = mc.get_object(bucket, key)
                 image_bytes = obj.read()
             except Exception:
                 pass
