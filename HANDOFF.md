@@ -46,9 +46,11 @@ Two separate Jenkins jobs, on two different nodes, at `streetsmashburgers.com`:
 - Needs these Jenkins credentials, **Kind: Secret text, Scope: Global**, under
   **Manage Jenkins → Credentials → System → Global** (not a personal user
   store — see gotcha below): `apify-token`, `supabase-url`,
-  `supabase-secret-key`, `openai-api-key`, `minio-endpoint`,
-  `minio-access-key`, `minio-secret-key`. Values live in the project's
-  `.env` file (not repeated here — don't paste secrets into shared docs).
+  `supabase-secret-key`, `openai-api-key`, `wasabi-endpoint`,
+  `wasabi-access-key`, `wasabi-secret-key`. The job sets
+  `TRIAGE_OBJECT_STORE=wasabi` so uploads go to Wasabi, not the office
+  MinIO NAS. Values live in the project's `.env` file (not repeated here —
+  don't paste secrets into shared docs).
 
 ### 2. `trend-scheduler` (node: Super-pc-ubuntu) — ⚠️ partially working
 - Source: `Arkem-LLC/trend-scheduler` (GitHub); runs on a 5-min cron.

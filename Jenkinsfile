@@ -67,6 +67,7 @@ pipeline {
 
     environment {
         PYTHONUNBUFFERED = '1'
+        TRIAGE_OBJECT_STORE = 'wasabi'
     }
 
     options {
@@ -96,9 +97,9 @@ pipeline {
                     string(credentialsId: 'supabase-secret-key', variable: 'SUPABASE_SECRET_KEY'),
                     string(credentialsId: 'apify-token',         variable: 'APIFY_TOKEN'),
                     string(credentialsId: 'openai-api-key',      variable: 'OPENAI_API_KEY'),
-                    string(credentialsId: 'minio-endpoint',      variable: 'MINIO_ENDPOINT'),
-                    string(credentialsId: 'minio-access-key',    variable: 'MINIO_ACCESS_KEY'),
-                    string(credentialsId: 'minio-secret-key',    variable: 'MINIO_SECRET_KEY'),
+                    string(credentialsId: 'wasabi-endpoint',   variable: 'WASABI_ENDPOINT_URL'),
+                    string(credentialsId: 'wasabi-access-key', variable: 'WASABI_ACCESS_KEY'),
+                    string(credentialsId: 'wasabi-secret-key', variable: 'WASABI_SECRET_KEY'),
                 ]) {
                     script {
                         // Build the argument list from whatever was supplied. An

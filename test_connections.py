@@ -25,8 +25,8 @@ try:
     client = get_minio()
     bucket = bucket_name()
     print(f"  store: {OBJECT_STORE} -> {bucket}")
-    if not mc.bucket_exists(bucket):
-        mc.make_bucket(bucket)
+    if not client.bucket_exists(bucket):
+        client.make_bucket(bucket)
         print(f"✓ MinIO      bucket '{bucket}' created")
     else:
         print(f"✓ MinIO      bucket '{bucket}' ready")
