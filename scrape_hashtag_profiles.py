@@ -8,7 +8,7 @@ decided up front (it is what you went looking for), not inferred afterwards.
 
     hashtags + countries
         -> geo-targeted hashtag search, no media downloaded  (per country)
-        -> filter to people who actually match the niche
+        -> drop private / mega / brand-agency accounts
         -> reference_accounts rows, niche preset
         -> profile record + picture archived
         -> N posts per profile -> clips -> media in object storage
@@ -23,32 +23,24 @@ the boards and the archive keep working without knowing this ran:
     <runs>/…/manifest.json  settings and totals for the run
     <media>/profiles/…jpg   profile pictures on the dashboard's own path
 
-Two things learned from the first UK probe, both of which cost money to find out:
-
-* Discovery must NOT download video. src.pipeline.trends.scrape_tiktok_feed
-  hardcodes shouldDownloadVideos=True, which is right for a trends harvest and
-  pure waste here — discovery only needs the handle. This module calls the actor
-  itself with downloads off rather than changing trends.py, which other
-  pipelines depend on.
-
-* A hashtag alone does not identify the niche. 120 posts under four tags gave
-  108 creators, of which a large share were brand accounts, agency-managed
-  influencers and people studying abroad who were not Chinese students at all.
-  So a bio filter runs before anything is registered or scraped, and generic
-  tags like #studyabroad are deliberately not in the defaults.
+Discovery must NOT download video. src.pipeline.trends.scrape_tiktok_feed
+hardcodes shouldDownloadVideos=True, which is right for a trends harvest and
+pure waste here — discovery only needs the handle. This module calls the actor
+itself with downloads off rather than changing trends.py, which other
+pipelines depend on.
 
 Country is a search hint, not a verified address. TikTok's region parameter
 targets where the search runs, and authorMeta.region came back empty on every
-result in testing — so attribution leans on the country-specific tag and the
-bio, and a per-country count is an indication, not a census. That caveat has to
-travel with any number used to make a decision.
+result in testing — so attribution leans on the tags you supply and the bio,
+and a per-country count is an indication, not a census.
 
 Example
 -------
     python scrape_hashtag_profiles.py \\
-        --title "Chinese students — western sweep" \\
-        --countries "GB,US,CA,AU,NZ,IE,DE,NL" \\
-        --niche chinese_student \\
+        --title "Gulf beauty — western sweep" \\
+        --countries "GB,US,AE" \\
+        --niche gulf_beauty \\
+        --hashtags "grwm,softglam,dubaibeauty" \\
         --posts-per-profile 10 \\
         --max-profiles 25
 """
@@ -85,39 +77,11 @@ MIN_VIEWS         = 300
 MAX_FOLLOWERS     = 300_000  # above this it is a brand or a managed influencer
 APPEARANCE_SAMPLE = 5
 
-# Chinese students specifically. Nothing generic — #studyabroad is deliberately
-# absent because the probe showed it returns anyone studying anywhere, which is
-# not who we are looking for. The Chinese-script tags carry most of the signal:
-# 留学生 is "overseas student" as written by Chinese speakers.
-GLOBAL_TAGS = ["chinesestudent", "chinesestudents", "中国留学生", "留学生"]
-
-COUNTRY_TAGS = {
-    "GB": ["chinesestudentsuk", "英国留学生", "英国留学"],
-    "US": ["chinesestudentsusa", "美国留学生", "美国留学"],
-    "CA": ["chinesestudentscanada", "加拿大留学生", "加拿大留学"],
-    "AU": ["chinesestudentsaustralia", "澳洲留学生", "澳洲留学"],
-    "NZ": ["新西兰留学生", "新西兰留学"],
-    "IE": ["爱尔兰留学生", "爱尔兰留学"],
-    "DE": ["德国留学生", "德国留学"],
-    "NL": ["荷兰留学生", "荷兰留学"],
-}
-DEFAULT_COUNTRIES = list(COUNTRY_TAGS)
-
-# A bio containing any of these says "Chinese overseas student" in their own
-# words. 念书/读书/在读 are here because the probe surfaced a real student —
-# "我叫菲菲在美国🇺🇸念书" — that a 留学-only list threw away.
-STRONG = ["留学生", "留学", "中国留学生", "陪读", "海归",
-          "念书", "读书", "在读", "求学", "上学"]
-# Otherwise we need a study signal AND a Chinese signal together.
-STUDY = ["student", "uni ", "university", "college", "master", "msc", "phd",
-         "postgrad", "undergrad", "grad school", "campus", "大学", "研究生", "学生"]
-CHINESE = ["chinese", "china", "中国", "🇨🇳", "华人", "chinesegirl", "chineseboy",
-           "mandarin", "cn🇨🇳", "香港", "hongkong"]
-# Brand, agency and management accounts — not students, whatever they tag.
+# Generic drop list — brands / agencies / booking desks, niche-agnostic.
 NOT_A_PERSON = ["brand:", "brand :", "management", "talent", "casting", "agency",
                 "booking", "pr:", "collab", "business inquir", "for business",
                 "sponsor", "mcn", "media group", "official account", "fans account",
-                "粉丝账号", "商务", "scholarships matched", "study abroad made"]
+                "粉丝账号", "商务"]
 
 
 def now():
@@ -128,13 +92,12 @@ def parse_args():
     p = argparse.ArgumentParser(
         description="Discover profiles from hashtags per country, save as reference accounts.")
     p.add_argument("--title", default="", help="Run name, shown in the request row and manifest")
-    p.add_argument("--hashtags", default="",
-                   help="Comma-separated. Blank uses the built-in Chinese-student tags, "
-                        "which are country-specific.")
-    p.add_argument("--countries", default=",".join(DEFAULT_COUNTRIES),
-                   help="Comma-separated ISO codes, e.g. GB,US,CA")
-    p.add_argument("--niche", default="chinese_student",
-                   help="Niche assigned to every profile found (decided up front)")
+    p.add_argument("--hashtags", required=True,
+                   help="Comma-separated hashtags to search (required — no built-in defaults)")
+    p.add_argument("--countries", required=True,
+                   help="Comma-separated ISO codes, e.g. GB,US,CA (required)")
+    p.add_argument("--niche", required=True,
+                   help="Niche assigned to every profile found (required)")
     p.add_argument("--posts-per-profile", type=int, default=POSTS_PER_PROFILE)
     p.add_argument("--max-profiles", type=int, default=MAX_PROFILES,
                    help="Cap on profiles kept per country")
@@ -148,8 +111,7 @@ def parse_args():
                    help="Only TikTok has geo-targeted hashtag search; Instagram is "
                         "global, so its country attribution rests on the tag and bio alone")
     p.add_argument("--no-bio-filter", action="store_true",
-                   help="Keep every creator found. Only for widening a sweep that "
-                        "came back empty — it lets non-students through.")
+                   help="Keep every creator found — skip private / follower / brand-agency drops")
     p.add_argument("--skip-appearance", action="store_true",
                    help="Skip the vision pass — the per-profile cost driver")
     p.add_argument("--discover-only", action="store_true",
@@ -157,14 +119,15 @@ def parse_args():
     return p.parse_args()
 
 
-def tags_for(iso: str, override: str) -> list:
-    if override:
-        return [t.strip().lstrip("#").lower() for t in override.split(",") if t.strip()]
-    return GLOBAL_TAGS + COUNTRY_TAGS.get(iso.upper(), [])
+def tags_for(hashtags: str) -> list:
+    tags = [t.strip().lstrip("#").lower() for t in (hashtags or "").split(",") if t.strip()]
+    if not tags:
+        raise SystemExit("--hashtags is required (comma-separated, no built-in defaults)")
+    return tags
 
 
 def _signal(bio: str, followers: int, private: bool, max_followers: int):
-    """The niche test itself, on plain values so both platforms share one rule."""
+    """Generic quality gate — not niche-specific. Niche comes from the tags you searched."""
     bio = (bio or "").lower()
     if private:
         return False, "private account"
@@ -172,13 +135,7 @@ def _signal(bio: str, followers: int, private: bool, max_followers: int):
         return False, f"{followers:,} followers — brand/influencer"
     if any(k in bio for k in NOT_A_PERSON):
         return False, "brand/agency bio"
-    if not bio.strip():
-        return False, "empty bio — nothing to verify"
-    if any(k in bio for k in STRONG):
-        return True, "bio says 留学生/留学/念书"
-    if any(k in bio for k in STUDY) and any(k in bio for k in CHINESE):
-        return True, "study + chinese signal"
-    return False, "no chinese-student signal in bio"
+    return True, "passed quality filter"
 
 
 def matches_niche(author: dict, max_followers: int):
@@ -305,7 +262,12 @@ def discover(tags, iso, a):
 def main():
     a = parse_args()
     countries = [c.strip().upper() for c in a.countries.split(",") if c.strip()]
+    if not countries:
+        raise SystemExit("--countries is required (comma-separated ISO codes)")
     niche = a.niche.strip().lower().replace(" ", "_")
+    if not niche:
+        raise SystemExit("--niche is required")
+    tags = tags_for(a.hashtags)
     request_id = os.environ.get("REQUEST_ID")
     run_key = f"{niche}-{now():%Y%m%d-%H%M%S}"
 
@@ -313,19 +275,19 @@ def main():
     set_request_status(db, request_id, "running")
 
     log.info(f"[{a.title or run_key}] {len(countries)} countries | niche={niche} "
+             f"| tags={','.join(tags)} "
              f"| {a.posts_per_profile} posts/profile | max {a.max_profiles} profiles/country "
              f"| <= {a.max_followers:,} followers")
 
     t0 = time.time()
     seen_handles = set()
     summary = {"run_key": run_key, "title": a.title, "niche": niche,
-               "countries": {}, "started_at": now().isoformat()}
+               "hashtags": tags, "countries": {}, "started_at": now().isoformat()}
     appearance_on = not a.skip_appearance
     grand_profiles = grand_clips = 0
 
     try:
         for iso in countries:
-            tags = tags_for(iso, a.hashtags)
             log.info(f"── {iso} — {', '.join('#' + t for t in tags)}")
             try:
                 ranked, rejected, raw = discover(tags, iso, a)

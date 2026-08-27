@@ -150,6 +150,9 @@ pipeline {
                             if (!params.NICHE?.trim()) {
                                 error("hashtag_profiles needs NICHE")
                             }
+                            if (!params.TAGS?.trim()) {
+                                error("hashtag_profiles needs TAGS")
+                            }
                             cmd = ".venv/bin/python scrape_hashtag_profiles.py"
                             cmd += arg('--title',             params.TITLE)
                             cmd += arg('--countries',         params.COUNTRIES)

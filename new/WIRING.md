@@ -92,10 +92,10 @@ different script and request table.
 
 ```bash
 REQUEST_ID=<uuid> python scrape_hashtag_profiles.py \
-  --title "Chinese students — western sweep" \
-  --countries "GB,US,CA,AU" \
-  --niche chinese_student \
-  --hashtags "chinesestudent,chinesestudents" \
+  --title "Gulf beauty — western sweep" \
+  --countries "GB,US,AE" \
+  --niche gulf_beauty \
+  --hashtags "grwm,softglam,dubaibeauty" \
   --posts-per-profile 10 \
   --max-profiles 25 \
   --platform both \
@@ -104,13 +104,17 @@ REQUEST_ID=<uuid> python scrape_hashtag_profiles.py \
 
 | flag | from | notes |
 |---|---|---|
-| `--countries` | Countries | one or many ISO codes |
-| `--niche` | Niche | **one** niche applied to every profile found |
-| `--hashtags` | Hashtags | required in the console; blank falls back to niche defaults in the script |
+| `--countries` | Countries | **required** — one or many ISO codes |
+| `--niche` | Niche | **required** — one niche applied to every profile found |
+| `--hashtags` | Hashtags | **required** — no built-in defaults |
 | `--posts-per-profile` | Depth (`POSTS_PER_CREATOR`) | posts pulled per discovered profile |
 | `--max-profiles` | Max creators (`MAX_CREATORS`) | cap per country |
 | `--platform` | Platform toggle | |
 | `--skip-appearance` | always on from Jenkins for this path | no OpenAI |
+
+A light bio filter still drops private accounts, accounts over `--max-followers`,
+and obvious brand/agency bios. It does **not** require Chinese-student wording.
+Pass `--no-bio-filter` to keep everyone found under the hashtags.
 
 **Status:** create a `reference_scrape_requests` row, pass its id as `REQUEST_ID`
 (same table as *Track accounts*). The script sets `running`, then `success` /

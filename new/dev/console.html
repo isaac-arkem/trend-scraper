@@ -331,7 +331,7 @@ function syncCreatorsMode(){
     :'Creator intelligence uses the first country as the market. Add one for this run.';
   $('tagLab').innerHTML='Hashtags <em>required</em>';
   $('tagHelp').textContent=hash
-    ?'Tags used to find people in each country. Leave blank only if you want the built-in niche defaults.'
+    ?'Required. These are the only tags searched — there are no built-in defaults.'
     :'These seed the search. Pick tags the creators you want would actually post under.';
   $('pnote').className='note '+(hash?'y':'am');
   $('pnote').innerHTML=hash
@@ -461,7 +461,7 @@ function jenkinsParams(){
       P.PLATFORM = plat;
       P.POSTS_PER_CREATOR = String(S.depth);
       P.MAX_CREATORS = String(S.maxCreators);
-      if(t.length) P.TAGS = t.join(',');
+      P.TAGS = t.join(',');
       if(S.rec) P.RECENCY_DAYS = String(S.rec);
     } else {
       P.SCRAPER_TYPE = 'creator_intelligence';
