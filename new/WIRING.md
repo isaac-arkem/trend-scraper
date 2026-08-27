@@ -84,6 +84,43 @@ which maps directly onto the console's stage list.
 
 ---
 
+## 2b · Find new creators — hashtag discovery (AI off)
+
+When the console **AI analysis** switch is off under *Find new creators*, Jenkins
+runs `scrape_hashtag_profiles.py` instead of `main.py`. Same UI entry point;
+different script and request table.
+
+```bash
+REQUEST_ID=<uuid> python scrape_hashtag_profiles.py \
+  --title "Chinese students — western sweep" \
+  --countries "GB,US,CA,AU" \
+  --niche chinese_student \
+  --hashtags "chinesestudent,chinesestudents" \
+  --posts-per-profile 10 \
+  --max-profiles 25 \
+  --platform both \
+  --skip-appearance
+```
+
+| flag | from | notes |
+|---|---|---|
+| `--countries` | Countries | one or many ISO codes |
+| `--niche` | Niche | **one** niche applied to every profile found |
+| `--hashtags` | Hashtags | required in the console; blank falls back to niche defaults in the script |
+| `--posts-per-profile` | Depth (`POSTS_PER_CREATOR`) | posts pulled per discovered profile |
+| `--max-profiles` | Max creators (`MAX_CREATORS`) | cap per country |
+| `--platform` | Platform toggle | |
+| `--skip-appearance` | always on from Jenkins for this path | no OpenAI |
+
+**Status:** create a `reference_scrape_requests` row, pass its id as `REQUEST_ID`
+(same table as *Track accounts*). The script sets `running`, then `success` /
+`failed`.
+
+**Writes to:** `reference_accounts` → `clips` (`subject_type` = `ref`,
+`topic` = niche).
+
+---
+
 ## 3 · What's trending (dev only)
 
 ```bash
@@ -120,7 +157,8 @@ half way still leaves everything it completed.
 | Pipeline | Table | Key fields |
 |---|---|---|
 | Track accounts | `reference_scrape_requests` | `status` · `error_message` · `completed_at` · `final_progress` |
-| Find creators | `runs` | `current_stage` · `stage_statuses` · `status` · `total_*` |
+| Find creators (AI on) | `runs` | `current_stage` · `stage_statuses` · `status` · `total_*` |
+| Find creators (AI off / hashtag) | `reference_scrape_requests` | `status` · `error_message` · `completed_at` |
 | What's trending | `dance_scrape_requests` | `status` · `final_progress` · `completed_at` |
 
 ---
