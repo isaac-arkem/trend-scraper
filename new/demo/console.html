@@ -273,7 +273,7 @@ const PIPE = {
 };
 
 const CREATORS_PER_MARKET=200, IMAGES_PER_CREATOR=20, TRENDS_COUNTRY=1.50;
-let S={pipe:null,step:1,depth:25,rec:14,countries:[],plats:['tiktok','instagram'],niches:[],acctNiche:{}};
+let S={pipe:null,step:1,depth:25,rec:14,maxCreators:50,countries:[],plats:['tiktok','instagram'],niches:[],acctNiche:{}};
 const $=id=>document.getElementById(id);
 
 function show(n){
@@ -323,7 +323,7 @@ function counts(){
   const a=accts().filter(x=>!x.bad), t=tags();
   if(S.pipe==='reference') return {n:a.length,word:'account'};
   if(S.pipe==='trends')    return {n:(t.length||40)*Math.max(S.countries.length,1),word:'hashtag'};
-  return {n:CREATORS_PER_MARKET*Math.max(S.countries.length,1),word:'creator'};
+  return {n:S.maxCreators*Math.max(S.countries.length,1),word:'creator'};
 }
 
 function est(){
@@ -380,6 +380,7 @@ function jenkinsParams(){
     P.MARKET = S.countries[0] || '';
     P.PLATFORM = plat;
     P.POSTS_PER_CREATOR = String(S.depth);
+    P.MAX_CREATORS = String(S.maxCreators);
     if(t.length) P.TAGS = t.join(',');
 
   } else {

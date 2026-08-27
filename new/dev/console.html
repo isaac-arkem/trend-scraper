@@ -227,6 +227,10 @@ td:first-child{font-family:var(--mono);color:var(--tx)}
 <section id="s3">
   <div class="grid2">
     <div class="card"><h2>How much to pull</h2><div class="body">
+      <div class="field" id="f-maxcreators"><label class="f">How many creators</label>
+        <div class="seg" id="maxCreators"><button data-v="20">20</button><button data-v="50" class="on">50</button>
+        <button data-v="100">100</button><button data-v="200">200</button></div>
+        <div class="help">Caps discovery and profile scraping to the top matches by engagement.</div></div>
       <div class="field"><label class="f" id="depthLab">Posts from each</label>
         <div class="seg" id="depth"><button data-v="10">10</button><button data-v="25" class="on">25</button>
         <button data-v="50">50</button><button data-v="100">100</button></div>
@@ -298,7 +302,7 @@ const PIPE = {
 };
 
 const CREATORS_PER_MARKET=200, IMAGES_PER_CREATOR=20, TRENDS_COUNTRY=1.50;
-let S={pipe:null,step:1,depth:25,rec:14,countries:[],plats:['tiktok','instagram'],niches:[],acctNiche:{}};
+let S={pipe:null,step:1,depth:25,rec:14,maxCreators:50,countries:[],plats:['tiktok','instagram'],niches:[],acctNiche:{}};
 const $=id=>document.getElementById(id);
 
 function show(n){
@@ -348,7 +352,7 @@ function counts(){
   const a=accts().filter(x=>!x.bad), t=tags();
   if(S.pipe==='reference') return {n:a.length,word:'account'};
   if(S.pipe==='trends')    return {n:(t.length||40)*Math.max(S.countries.length,1),word:'hashtag'};
-  return {n:CREATORS_PER_MARKET*Math.max(S.countries.length,1),word:'creator'};
+  return {n:S.maxCreators*Math.max(S.countries.length,1),word:'creator'};
 }
 
 function est(){
@@ -372,7 +376,7 @@ function est(){
   $('eLines').innerHTML=rows.map(([a,b])=>`<div class="row"><span>${a}</span><b>${b}</b></div>`).join('')
     +`<div class="row tot"><span>Total</span><b>$${total.toFixed(2)}</b></div>`;
   $('eNote').innerHTML=p.ai
-    ?'<b>Around two thirds of this is the AI analysis.</b> A market usually returns 150–320 creators, so we assume 200. Accounts we have seen before are skipped, so repeat runs cost less.'
+    ?`<b>Around two thirds of this is the AI analysis.</b> Profile scraping is capped at ${S.maxCreators} creators per market. Accounts we have seen before are skipped, so repeat runs cost less.`
     :'<b>No AI analysis in this one.</b> You are paying for collection only.';
   $('f3').textContent=`${c.n} ${c.word}s · ${S.depth} posts each`;
 }
@@ -405,6 +409,7 @@ function jenkinsParams(){
     P.MARKET = S.countries[0] || '';
     P.PLATFORM = plat;
     P.POSTS_PER_CREATOR = String(S.depth);
+    P.MAX_CREATORS = String(S.maxCreators);
     if(t.length) P.TAGS = t.join(',');
 
   } else {
@@ -502,6 +507,7 @@ document.querySelectorAll('.pk').forEach(b=>b.onclick=()=>{
     ? 'Hashtags <em>required</em>' : 'Hashtags <i>optional</i>';
   if(p.tagHelp) $('tagHelp').textContent=p.tagHelp;
   if(DEV) $('depthLab').textContent='Posts from each '+p.unit;
+  $('f-maxcreators').style.display=S.pipe==='creators'?'block':'none';
 });
 
 document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>show(+b.dataset.go));
@@ -541,6 +547,9 @@ if(DEV){
   document.querySelectorAll('#depth button').forEach(b=>b.onclick=()=>{
     document.querySelectorAll('#depth button').forEach(x=>x.classList.remove('on'));
     b.classList.add('on'); S.depth=+b.dataset.v; est(); });
+  document.querySelectorAll('#maxCreators button').forEach(b=>b.onclick=()=>{
+    document.querySelectorAll('#maxCreators button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on'); S.maxCreators=+b.dataset.v; est(); });
   document.querySelectorAll('#rec button').forEach(b=>b.onclick=()=>{
     document.querySelectorAll('#rec button').forEach(x=>x.classList.remove('on'));
     b.classList.add('on'); S.rec=+b.dataset.v; est(); });

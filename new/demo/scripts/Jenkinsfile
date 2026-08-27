@@ -43,6 +43,8 @@ pipeline {
                description: 'Single market code, must exist in the markets table')
         string(name: 'POSTS_PER_CREATOR', defaultValue: '',
                description: 'Posts to pull per creator')
+        string(name: 'MAX_CREATORS', defaultValue: '',
+               description: 'Cap discovery, enrichment, and harvest to top N creators')
         booleanParam(name: 'SKIP_ANALYSIS', defaultValue: false,
                description: 'Skip AI vision. Turn on to avoid OpenAI spend entirely.')
 
@@ -130,6 +132,7 @@ pipeline {
                             cmd += arg('--market',   params.MARKET)
                             cmd += arg('--platform', params.PLATFORM ?: 'both')
                             cmd += arg('--posts',    params.POSTS_PER_CREATOR)
+                            cmd += arg('--limit',    params.MAX_CREATORS)
                             cmd += arg('--hashtags', params.TAGS)
                             if (params.SKIP_ANALYSIS) { cmd += " --skip-analysis" }
 

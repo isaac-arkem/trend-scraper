@@ -58,6 +58,7 @@ python main.py \
   --title "Dubai discovery" \
   --market AE \
   --platform both \
+  --limit 50 \
   --posts 25 \
   --hashtags "catgirls,dubaibeauty"
 ```
@@ -66,7 +67,8 @@ python main.py \
 |---|---|---|
 | `--market` | Country | **must already exist in `markets`** — see limitations |
 | `--platform` | Platform toggle | `tiktok` · `instagram` · `both` |
-| `--posts` | Depth | posts per creator |
+| `--limit` | Max creators | caps discovery, profile enrichment, expansion, and harvest |
+| `--posts` | Depth | posts per creator at harvest |
 | `--hashtags` | Hashtags | optional; overrides the market's stored list |
 
 **Status:** poll the `runs` table. `current_stage` (1–6), `stage_statuses` (JSON

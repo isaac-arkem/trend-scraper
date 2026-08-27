@@ -62,8 +62,9 @@ def get_or_create_market(market_code: str, platform: str, market_cfg: dict) -> d
 @click.command()
 @click.option("--market", required=True, help="Market code e.g. UAE, SA, BR")
 @click.option("--platform", default="both", type=click.Choice(["instagram", "tiktok", "both"]), show_default=True)
-@click.option("--limit", default=10000, type=int, show_default=True, help="Max creators to target (no cap by default)")
-@click.option("--posts", default=20, type=int, show_default=True, help="Posts per creator")
+@click.option("--limit", default=10000, type=int, show_default=True,
+              help="Max creators to discover, enrich, and harvest (top by engagement)")
+@click.option("--posts", default=20, type=int, show_default=True, help="Posts per creator at harvest")
 @click.option("--resume", is_flag=True, help="Resume from last checkpoint")
 @click.option("--from-stage", default=1, type=int, show_default=True, help="Start from specific stage (1-6)")
 @click.option("--skip-analysis", is_flag=True, help="Skip AI analysis (stage 5)")
@@ -101,6 +102,26 @@ def main(market, platform, limit, posts, resume, from_stage, skip_analysis, hash
         _run_platform(market, plat, market_cfg, limit, posts, resume, from_stage, skip_analysis)
 
 
+def _cap_ranked_creators(creators: list, max_creators: int, *, label: str) -> list:
+    if not max_creators or len(creators) <= max_creators:
+        return creators
+    log.info(f"[{label}] Capping to top {max_creators} of {len(creators)} creators")
+    return creators[:max_creators]
+
+
+def _discovery_limit(market_cfg: dict, platform: str, posts_per_hashtag: int, max_creators: int) -> int:
+    """Scale the hashtag sweep down when the operator asked for fewer creators."""
+    if not max_creators or max_creators >= posts_per_hashtag * 2:
+        return posts_per_hashtag
+    n_tags = max(len(market_cfg.get("hashtags", {}).get(platform, [])), 1)
+    scaled = max(15, (max_creators * 3 + n_tags - 1) // n_tags)
+    capped = min(posts_per_hashtag, scaled)
+    if capped < posts_per_hashtag:
+        log.info(f"[Stage 1] Hashtag sweep limited to {capped} posts/tag "
+                 f"(max_creators={max_creators}, market default {posts_per_hashtag})")
+    return capped
+
+
 def _run_platform(market_code, platform, market_cfg, max_creators, posts_per_creator, resume, from_stage, skip_analysis):
     market_row = get_or_create_market(market_code, platform, market_cfg)
     market_id = market_row["id"]
@@ -124,9 +145,11 @@ def _run_platform(market_code, platform, market_cfg, max_creators, posts_per_cre
     # Stage 1 — Discovery
     if from_stage <= 1 and not runner.is_stage_done(run, 1):
         try:
+            sweep_limit = _discovery_limit(market_cfg, platform, posts_per_hashtag, max_creators)
             discovered, raw_posts = stage1_discovery.run(
-                market_cfg, platform, limit_per_hashtag=posts_per_hashtag
+                market_cfg, platform, limit_per_hashtag=sweep_limit
             )
+            discovered = _cap_ranked_creators(discovered, max_creators, label="Stage 1")
             runner.stage_done(run_id, 1)
             run = _reload_run(run_id)
         except Exception as e:
@@ -161,13 +184,14 @@ def _run_platform(market_code, platform, market_cfg, max_creators, posts_per_cre
     # Stage 3 — Expand
     if from_stage <= 3 and not runner.is_stage_done(run, 3):
         try:
+            expansion_cap = min(max_expansion, max_creators) if max_creators else max_expansion
             all_creators = stage3_expand.run(
                 enriched_creators=enriched_creators,
                 market=market_cfg,
                 market_id=market_id,
                 run_id=run_id,
                 platform=platform,
-                max_candidates=max_expansion,
+                max_candidates=expansion_cap,
             )
             runner.stage_done(run_id, 3)
             run = _reload_run(run_id)
