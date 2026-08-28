@@ -52,6 +52,7 @@ Example
         --posts-per-profile 10 \\
         --max-profiles 25
 """
+from typing import Optional
 import argparse
 import json
 import os
@@ -68,6 +69,7 @@ from src.apify.client import run_actor                 # noqa: E402
 from src.db.client import get_db                       # noqa: E402
 from src.pipeline import trends as T                   # noqa: E402
 import src.run_archive as A                            # noqa: E402
+from src.storage.minio import get_minio                # noqa: E402
 from src.utils.logger import get_logger                # noqa: E402
 from scrape_reference_accounts import (                 # noqa: E402
     aggregate_appearance,
@@ -77,7 +79,7 @@ from scrape_reference_accounts import (                 # noqa: E402
 
 log = get_logger(__name__)
 
-POSTS_PER_PROFILE = 10
+POSTS_PER_PROFILE = 20   # per creator, raised from 10
 MAX_PROFILES      = 25      # per country
 PER_TAG           = 30      # posts pulled per hashtag before filtering
 RECENCY_DAYS      = 90
@@ -133,8 +135,14 @@ def parse_args():
                         "which are country-specific.")
     p.add_argument("--countries", default=",".join(DEFAULT_COUNTRIES),
                    help="Comma-separated ISO codes, e.g. GB,US,CA")
-    p.add_argument("--niche", default="chinese_student",
-                   help="Niche assigned to every profile found (decided up front)")
+    # Required, and deliberately not defaulted. A niche is what the run IS —
+    # everything it finds is filed under it, and a run that silently inherited
+    # "chinese_student" would file Russian creators under Chinese students.
+    # A hashtag is not a niche: #chinesestudentsuk is one of several ways to
+    # search for one, which is why tags hang off the niche rather than replace it.
+    p.add_argument("--niche", required=True,
+                   help="REQUIRED. Niche slug every profile and clip is filed under, "
+                        "e.g. chinese_student. Created if it doesn't exist yet.")
     p.add_argument("--posts-per-profile", type=int, default=POSTS_PER_PROFILE)
     p.add_argument("--max-profiles", type=int, default=MAX_PROFILES,
                    help="Cap on profiles kept per country")
@@ -151,7 +159,12 @@ def parse_args():
                    help="Keep every creator found. Only for widening a sweep that "
                         "came back empty — it lets non-students through.")
     p.add_argument("--skip-appearance", action="store_true",
-                   help="Skip the vision pass — the per-profile cost driver")
+                   help="Skip the appearance pass entirely — no OpenAI spend at all")
+    p.add_argument("--vision-budget-eur", type=float, default=44.0,
+                   help="Hard ceiling for the WHOLE run, every country included. "
+                        "The per-creator image allowance is derived from it.")
+    p.add_argument("--max-images-per-creator", type=int, default=3,
+                   help="Never analyse more than this per creator, budget allowing")
     p.add_argument("--discover-only", action="store_true",
                    help="Find and register profiles, don't scrape their posts yet")
     return p.parse_args()
@@ -302,6 +315,194 @@ def discover(tags, iso, a):
     return ranked, rejected, []
 
 
+def get_or_create_niche(slug: str, hashtags: list, countries: list) -> Optional[int]:
+    """The niche row this run belongs to, created on first use.
+
+    A niche is picked or invented by the operator; a hashtag is one of several
+    ways to search for it. Keeping them in separate places is the whole point —
+    running #chinesestudentsuk and #英国留学生 must land in ONE niche, not two.
+    Returns the id, or None if the table isn't there yet (older database), which
+    must not stop the run.
+    """
+    slug = (slug or "").strip().lower().replace(" ", "_")
+    if not slug:
+        return None
+    db = get_db()
+    try:
+        found = db.table("niches").select("id").eq("slug", slug).limit(1).execute().data
+        if found:
+            return found[0]["id"]
+        row = db.table("niches").insert({
+            "slug": slug,
+            "label": slug.replace("_", " ").title(),
+            "hashtags": hashtags or [],
+            "countries": countries or [],
+            "created_by": "creator_intelligence",
+        }).execute().data
+        nid = row[0]["id"] if row else None
+        log.info(f"[niche] created '{slug}' (id {nid})")
+        return nid
+    except Exception as e:
+        log.warning(f"[niche] unavailable, continuing without it — {str(e)[:90]}")
+        return None
+
+
+def tag_niche(niche_id: Optional[int], post_ids: list, handles: list) -> None:
+    """Stamp niche_id onto everything this run produced.
+
+    Done as a pass at the end rather than inline: the clips are written by
+    shared code that has no concept of a niche, and this file is the only place
+    that knows which niche the run was for.
+    """
+    if not niche_id:
+        return
+    db = get_db()
+    for i in range(0, len(post_ids), 100):
+        try:
+            db.table("clips").update({"niche_id": niche_id})\
+              .in_("platform_post_id", post_ids[i:i + 100]).execute()
+        except Exception as e:
+            log.warning(f"[niche] clip tagging failed — {str(e)[:80]}")
+            break
+    for i in range(0, len(handles), 100):
+        try:
+            db.table("reference_accounts").update({"niche_id": niche_id})\
+              .in_("handle", handles[i:i + 100]).execute()
+        except Exception as e:
+            log.warning(f"[niche] account tagging failed — {str(e)[:80]}")
+            break
+    log.info(f"[niche] tagged {len(post_ids)} clips, {len(handles)} accounts -> niche {niche_id}")
+
+
+def save_cover_images(pending: list) -> dict:
+    """Download every clip's cover frame into object storage.
+
+    Only the mp4 was ever stored. An image post therefore left no media at all,
+    the console had no thumbnail, and anything wanting to look at the picture had
+    to go back to the platform CDN — where the URL carries an expiry and starts
+    returning 403 within days. Stored next to the video, same bucket.
+    """
+    if not pending:
+        return {"attempted": 0, "saved": 0, "already_held": 0, "failed": 0}
+
+    db = get_db()
+    stats = {"attempted": len(pending), "saved": 0, "already_held": 0, "failed": 0}
+    log.info(f"[media] {len(pending)} cover images")
+
+    def one(item):
+        path = f"{item['platform']}/cover/{item['post_id']}.jpg"
+        try:
+            if A.exists(path, A.RUNS_BUCKET):
+                return "already_held", item, path
+            img = A.download(item["cover"])
+            if not img:
+                return "failed", item, None
+            if not A.put_bytes(path, img, "image/jpeg", A.RUNS_BUCKET):
+                return "failed", item, None
+            return "saved", item, path
+        except Exception as e:
+            log.debug(f"  cover failed {item['post_id']}: {str(e)[:60]}")
+            return "failed", item, None
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for outcome, item, path in ex.map(one, pending):
+            stats[outcome] += 1
+            if path:
+                item["image_path"] = path
+                try:
+                    db.table("clips").update({"image_minio_path": path})\
+                      .eq("platform_post_id", item["post_id"]).execute()
+                except Exception:
+                    # The column may not exist yet on an un-migrated database.
+                    # The image is still in storage and the path is deterministic,
+                    # so this is recoverable — it must not fail the run.
+                    pass
+    log.info(f"[media] saved {stats['saved']}, already held {stats['already_held']}, "
+             f"failed {stats['failed']}")
+    return stats
+
+
+def run_appearance(pending: list, a) -> dict:
+    """Two-stage appearance analysis over the whole run, inside one budget.
+
+    Stage 1 is a cheap model answering only 'is there an adult person here'.
+    Only images that pass reach the expensive full read. Children and adverts
+    are rejected at the gate and their images are never sent onward — that is a
+    safeguarding rule, so it is enforced in code, not requested in a prompt.
+
+    The budget covers the entire run, every country in it. Because the scrape is
+    already finished, the creator count is exact, and the per-creator image
+    allowance is derived from it before any spending starts.
+    """
+    from collections import defaultdict
+    from src.ai.appearance import (Budget, analyse_creator, eur_to_usd,
+                                   plan_images_per_creator)
+
+    with_images = [p for p in pending if p.get("image_path")]
+    if not with_images:
+        return {"skipped": True, "reason": "no stored images to analyse"}
+
+    by_creator = defaultdict(list)
+    for p in with_images:
+        by_creator[p["handle"]].append(p)
+
+    budget = Budget(eur_to_usd(a.vision_budget_eur))
+    per_creator = plan_images_per_creator(len(by_creator), budget,
+                                          max_per_creator=a.max_images_per_creator)
+    log.info(f"[vision] {len(by_creator)} creators, budget €{a.vision_budget_eur:.0f} "
+             f"(${budget.cap:.2f}) → {per_creator} image(s) each")
+
+    db = get_db()
+    counts = defaultdict(int)
+    analysed_creators = 0
+
+    for handle, items in by_creator.items():
+        if budget.remaining() <= 0:
+            budget.mark_stopped()
+            break
+        images = []
+        for it in items[:per_creator]:
+            try:
+                bucket, key = _resolve_media(it["image_path"])
+                images.append((it["post_id"], get_minio().get_object(bucket, key).read()))
+            except Exception:
+                continue
+        if not images:
+            continue
+
+        for v in analyse_creator(images, budget, per_creator):
+            counts[v["stage"]] += 1
+            row = {"vision_checked": True, "vision_stage": v["stage"]}
+            if v["stage"] == "analysed":
+                row["appearance"] = v["appearance"]
+                row["subject_type"] = T.subject_from_vision(v["appearance"])
+                row["suitability_flag"] = row["subject_type"] in T.SUBJECT_TYPES
+            try:
+                db.table("clips").update(row).eq("platform_post_id", v["clip_id"]).execute()
+            except Exception as e:
+                log.debug(f"  clip update failed: {str(e)[:60]}")
+        analysed_creators += 1
+
+    out = {
+        "creators_seen": analysed_creators,
+        "images_per_creator": per_creator,
+        "spent_usd": round(budget.spent, 4),
+        "spent_eur": round(budget.spent / float(os.environ.get("EUR_USD_RATE", "1.08")), 2),
+        "budget_eur": a.vision_budget_eur,
+        "stopped_on_budget": budget.stopped_early,
+        "by_outcome": dict(counts),
+    }
+    log.info(f"[vision] {dict(counts)} · spent €{out['spent_eur']:.2f} of "
+             f"€{a.vision_budget_eur:.0f}" + ("  (CAP REACHED)" if budget.stopped_early else ""))
+    return out
+
+
+def _resolve_media(path: str):
+    from src.storage.minio import resolve
+    return resolve(A.RUNS_BUCKET, path)
+
+
 def main():
     a = parse_args()
     countries = [c.strip().upper() for c in a.countries.split(",") if c.strip()]
@@ -321,6 +522,15 @@ def main():
     summary = {"run_key": run_key, "title": a.title, "niche": niche,
                "countries": {}, "started_at": now().isoformat()}
     appearance_on = not a.skip_appearance
+    # Cover URLs collected across every country, for the media and appearance
+    # phases that run once the whole scrape is done.
+    pending_media = []
+    all_handles = []
+    # The niche exists before anything is scraped — everything this run produces
+    # is filed under it, so it must not depend on the run succeeding.
+    niche_id = get_or_create_niche(niche, [t for t in (a.hashtags or "").split(",") if t],
+                                   [c for c in (a.countries or "").split(",") if c])
+    summary["niche_id"] = niche_id
     grand_profiles = grand_clips = 0
 
     try:
@@ -371,6 +581,7 @@ def main():
                     log.warning(f"  {plat} profile archive failed — {str(e)[:110]}")
 
             country_clips = 0
+            all_handles.extend(handles)
             per_profile = []
             if not a.discover_only:
                 accts = (db.table("reference_accounts").select("*")
@@ -397,19 +608,23 @@ def main():
                     country_clips += saved
                     log.info(f"     {len(clips)} clips -> {saved} saved")
 
-                    appearance = None
-                    if appearance_on and clips:
-                        covers = [c.get("_cover_url") for c in clips if c.get("_cover_url")]
-                        try:
-                            appearance = aggregate_appearance(covers[:APPEARANCE_SAMPLE])
-                        except Exception as e:
-                            log.warning(f"     appearance off for the rest — {str(e)[:70]}")
-                            appearance_on = False
+                    # Cover URLs are held for the media + vision phases, which run
+                    # once the whole scrape is finished. They are kept here because
+                    # this is the only point they exist: the actor returns them,
+                    # they are not persisted, and they expire from the platform CDN
+                    # within days. Nothing is analysed yet.
+                    for c in clips:
+                        if c.get("_cover_url") and c.get("platform_post_id"):
+                            pending_media.append({
+                                "post_id": c["platform_post_id"],
+                                "platform": c["platform"],
+                                "cover": c["_cover_url"],
+                                "handle": h,
+                                "country": iso,
+                            })
 
-                    upd = {"scraped_at": now().isoformat()}
-                    if appearance is not None:
-                        upd["appearance"] = appearance
-                    db.table("reference_accounts").update(upd).eq("id", acct["id"]).execute()
+                    db.table("reference_accounts").update(
+                        {"scraped_at": now().isoformat()}).eq("id", acct["id"]).execute()
                     per_profile.append({"handle": h, "clips_saved": saved,
                                         "followers": next((r["followers"] for r in fresh
                                                            if r["handle"] == h), None)})
@@ -432,6 +647,21 @@ def main():
                                        "min_views": a.min_views, "title": a.title},
                              totals={"creators": len(ranked), "registered": len(fresh),
                                      "rejected": len(rejected), "clips_saved": country_clips})
+
+        tag_niche(niche_id, [m["post_id"] for m in pending_media], all_handles)
+
+        # ── phase 2 · media ────────────────────────────────────────────────
+        # Videos are already in object storage (process_clips does that as each
+        # clip is saved). Cover images were not stored at all, so an image post
+        # left nothing behind and the appearance pass had nothing local to read.
+        summary["media"] = save_cover_images(pending_media)
+
+        # ── phase 3 · appearance ───────────────────────────────────────────
+        # Deliberately after the whole scrape, not during it. The creator count
+        # is only known once every country is done, and that count is what the
+        # budget is divided by — starting earlier would mean guessing.
+        summary["vision"] = run_appearance(pending_media, a) if not a.skip_appearance else {
+            "skipped": True, "reason": "--skip-appearance"}
 
         summary["finished_at"] = now().isoformat()
         summary["minutes"] = round((time.time() - t0) / 60, 1)
