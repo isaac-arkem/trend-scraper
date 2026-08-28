@@ -234,8 +234,7 @@ def main():
         handle, plat = a["handle"], a["platform"]
         log(f"── [{done+1}/{len(accts)}] @{handle} ({plat}) | topic={a.get('topic')} region={a.get('region')}")
 
-        if done == 0:
-            stage("posts", f"Collecting posts from {len(accts)} account(s)")
+        stage("posts", f"Collecting posts from @{handle}")
         log(f"   Fetching latest {per_account} posts from {plat}…")
         try:
             if plat == "tiktok":
@@ -256,7 +255,7 @@ def main():
             c["subject_type"] = "ref"      # pre-set so process_clips skips per-clip vision
 
         if clips:
-            stage("media", f"Saving media for @{handle}")
+            stage("media", f"Saving media from @{handle}")
             log(f"   Processing {len(clips)} clips (downloading audio/video, saving to storage)…")
             saved = T.process_clips(clips, workers=8)
             log(f"   {saved} clips saved to storage ({len(clips) - saved} duplicates/skipped)")
