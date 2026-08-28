@@ -122,6 +122,34 @@ NOT_A_PERSON = ["brand:", "brand :", "management", "talent", "casting", "agency"
                 "粉丝账号", "商务", "scholarships matched", "study abroad made"]
 
 
+
+# ── stage markers ───────────────────────────────────────────────────────────
+# Emitted on their own line in a fixed format so a consumer can read progress
+# without parsing prose that will change. api.py turns the most recent one into
+# the `stage` field on GET /runs/{id}, which is what the console polls.
+#
+#   STAGE|<n>|<total>|<key>|<human text>
+#
+# Printed rather than logged: the logger wraps and colourises long lines, which
+# would break a parser on exactly the runs that matter most — the long ones.
+STAGES = [
+    (1, "discover", "Searching hashtags and finding creators"),
+    (2, "profiles", "Fetching profiles and avatars"),
+    (3, "posts",    "Collecting posts"),
+    (4, "media",    "Downloading videos and images"),
+    (5, "vision",   "Analysing appearance"),
+    (6, "done",     "Finished"),
+]
+STAGE_TOTAL = len(STAGES)
+
+
+def stage(key: str, detail: str = "") -> None:
+    for n, k, text in STAGES:
+        if k == key:
+            print(f"STAGE|{n}|{STAGE_TOTAL}|{k}|{detail or text}", flush=True)
+            return
+
+
 def now():
     return datetime.now(timezone.utc)
 
@@ -313,6 +341,58 @@ def discover(tags, iso, a):
         log.info(f"     rejected @{r['handle']}: {r['reason']}")
     ranked = sorted(kept, key=lambda r: (-r["posts"], -min(r["followers"], 50_000)))
     return ranked, rejected, []
+
+
+def save_creators(profiles: list, niche_id: Optional[int], niche: str,
+                  country: str) -> int:
+    """Discovered people go in `creators`. That is the creator table.
+
+    They were being written only to reference_accounts, which is for accounts a
+    human curated by hand — so creator intelligence output was landing in the
+    wrong place and could not be queried alongside the 2,885 creators already
+    there. reference_accounts still gets a row because the scrape loop reads its
+    handles, but `creators` is the record.
+
+    Upserted on (platform, username) so a re-run refreshes rather than
+    duplicating — which is what makes "Re-run" safe.
+    """
+    if not profiles:
+        return 0
+    db = get_db()
+    rows = []
+    for p in profiles:
+        uname = (p.get("username") or p.get("handle") or "").lower().lstrip("@")
+        if not uname:
+            continue
+        rows.append({
+            "platform": p.get("platform") or "tiktok",
+            "username": uname,
+            "platform_user_id": p.get("platform_user_id"),
+            "full_name": p.get("full_name") or p.get("display_name"),
+            "bio": p.get("bio"),
+            "followers": p.get("followers"),
+            "following": p.get("following"),
+            "post_count": p.get("post_count"),
+            "is_verified": bool(p.get("is_verified")),
+            "profile_url": p.get("profile_url"),
+            "profile_pic_url": p.get("profile_pic_url") or p.get("profile_pic"),
+            "niche_id": niche_id,
+            # Says how this creator was found, so hashtag discovery can be told
+            # apart from a curated add later on.
+            "source_type": "hashtag_discovery",
+            "scraped_at": now().isoformat(),
+        })
+    saved = 0
+    for i in range(0, len(rows), 100):
+        try:
+            r = db.table("creators").upsert(rows[i:i + 100],
+                                            on_conflict="platform,username").execute()
+            saved += len(r.data or [])
+        except Exception as e:
+            log.warning(f"[creators] upsert failed — {str(e)[:120]}")
+            break
+    log.info(f"[creators] {saved} rows in `creators` for {country} (niche {niche_id})")
+    return saved
 
 
 def get_or_create_niche(slug: str, hashtags: list, countries: list) -> Optional[int]:
@@ -531,12 +611,13 @@ def main():
     niche_id = get_or_create_niche(niche, [t for t in (a.hashtags or "").split(",") if t],
                                    [c for c in (a.countries or "").split(",") if c])
     summary["niche_id"] = niche_id
-    grand_profiles = grand_clips = 0
+    grand_profiles = grand_clips = grand_creators = 0
 
     try:
         for iso in countries:
             tags = tags_for(iso, a.hashtags)
             log.info(f"── {iso} — {', '.join('#' + t for t in tags)}")
+            stage("discover", f"Searching {len(tags)} hashtags in {iso}")
             try:
                 ranked, rejected, raw = discover(tags, iso, a)
             except Exception as e:
@@ -566,8 +647,14 @@ def main():
                  if r["platform"] == "instagram" else f"{r['handle']}={niche}")
                 for r in fresh)
             register_accounts(db, spec, region=iso)
+            # The creator table is `creators`. reference_accounts above is
+            # pipeline plumbing — the scrape loop reads its handles — but the
+            # record of who was found belongs with the other 2,885 creators,
+            # not in the table meant for hand-curated accounts.
+            grand_creators += save_creators(fresh, niche_id, niche, iso)
             seen_handles.update(handles)
 
+            stage("profiles", f"Fetching {len(fresh)} profiles in {iso}")
             pstats = {}
             for plat in sorted({r["platform"] for r in fresh}):
                 hs = [r["handle"] for r in fresh if r["platform"] == plat]
@@ -580,6 +667,7 @@ def main():
                     pstats[plat] = {"error": str(e)[:150]}
                     log.warning(f"  {plat} profile archive failed — {str(e)[:110]}")
 
+            stage("posts", f"Collecting posts for {len(fresh)} creators in {iso}")
             country_clips = 0
             all_handles.extend(handles)
             per_profile = []
@@ -654,18 +742,21 @@ def main():
         # Videos are already in object storage (process_clips does that as each
         # clip is saved). Cover images were not stored at all, so an image post
         # left nothing behind and the appearance pass had nothing local to read.
+        stage("media", f"Downloading {len(pending_media)} images")
         summary["media"] = save_cover_images(pending_media)
 
         # ── phase 3 · appearance ───────────────────────────────────────────
         # Deliberately after the whole scrape, not during it. The creator count
         # is only known once every country is done, and that count is what the
         # budget is divided by — starting earlier would mean guessing.
+        stage("vision", "Analysing appearance")
         summary["vision"] = run_appearance(pending_media, a) if not a.skip_appearance else {
             "skipped": True, "reason": "--skip-appearance"}
 
         summary["finished_at"] = now().isoformat()
         summary["minutes"] = round((time.time() - t0) / 60, 1)
-        summary["totals"] = {"profiles": grand_profiles, "clips": grand_clips}
+        summary["totals"] = {"profiles": grand_profiles, "clips": grand_clips,
+                             "creators": grand_creators}
         summary["by_country"] = {k: v.get("new", 0) for k, v in summary["countries"].items()}
 
         A.put_json(f"runs/{a.platform}/{now():%Y/%m/%d}/{run_key}-summary.json", summary)

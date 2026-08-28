@@ -358,8 +358,30 @@ def _refresh(r: dict) -> dict:
     return r
 
 
+def _stage(log_path: str) -> Optional[dict]:
+    """The most recent STAGE| marker a run printed.
+
+    Scripts emit `STAGE|n|total|key|text` on its own line. Reading the last one
+    gives live progress without the console having to parse log prose, which
+    changes; the marker format does not.
+    """
+    try:
+        last = None
+        with open(log_path) as fh:
+            for line in fh:
+                if line.startswith("STAGE|"):
+                    last = line.strip()
+        if not last:
+            return None
+        _, n, total, key, text = last.split("|", 4)
+        return {"number": int(n), "of": int(total), "key": key, "text": text}
+    except Exception:
+        return None
+
+
 def _public(r: dict, tail_lines: int = 0) -> dict:
     out = {k: v for k, v in r.items() if k not in ("proc", "log")}
+    out["stage"] = _stage(r["log"])
     if tail_lines:
         try:
             with open(r["log"]) as fh:
