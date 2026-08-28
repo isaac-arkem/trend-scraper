@@ -297,6 +297,55 @@ def start_run(req: RunRequest):
             "poll": f"/runs/{run_id}", "command": " ".join(cmd[1:])}
 
 
+# ── one endpoint per pipeline ───────────────────────────────────────────────
+# The generic POST /runs stays for anything scripted, but the platform gets a
+# named endpoint each. A form that posts to /creator-intelligence cannot
+# accidentally start a trends sweep because a `pipeline` field was mistyped or
+# defaulted, and each endpoint documents its own body in the OpenAPI schema —
+# which is what Isaac reads to build the form.
+
+
+@app.post("/creator-intelligence", dependencies=[Depends(auth)])
+def run_creator_intelligence(req: RunRequest):
+    """Hashtags + countries -> creators -> their posts -> media -> appearance.
+
+    niche is REQUIRED and is not a hashtag. Both countries and hashtags accept
+    a comma-separated list of any length.
+
+    vision_budget_eur caps the WHOLE run — ten countries and a hundred hashtags
+    still share one ceiling. The scrape finishes before any analysis starts, so
+    the creator count is exact and the per-creator image allowance is divided
+    from it rather than guessed.
+    """
+    req.pipeline = "creator_intelligence"
+    return start_run(req)
+
+
+@app.post("/reference-profiles", dependencies=[Depends(auth)])
+def run_reference_profiles(req: RunRequest):
+    """Scrape accounts somebody already chose.
+
+    `accounts` adds new ones as account=niche pairs; `handles` refreshes ones
+    already stored. Both take comma-separated lists, so several profiles across
+    several niches go in one call. One of the two must be present — without
+    either, the underlying script selects every active account and runs a full
+    sweep, which is never what a form submission means.
+    """
+    req.pipeline = "reference_profiles"
+    return start_run(req)
+
+
+@app.post("/trends", dependencies=[Depends(auth)])
+def run_trends(req: RunRequest):
+    """TikTok's own trending board per market, plus any hashtags you name.
+
+    `markets` is comma separated. Leaving `hashtags` blank uses the live
+    trending board for each market, which is the point of this pipeline.
+    """
+    req.pipeline = "trends"
+    return start_run(req)
+
+
 def _refresh(r: dict) -> dict:
     """Reap the subprocess so status reflects reality, not what we last saw."""
     proc = r.get("proc")
