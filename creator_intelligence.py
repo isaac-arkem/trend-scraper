@@ -45,10 +45,11 @@ travel with any number used to make a decision.
 
 Example
 -------
-    python scrape_hashtag_profiles.py \\
-        --title "Chinese students — western sweep" \\
-        --countries "GB,US,CA,AU,NZ,IE,DE,NL" \\
-        --niche chinese_student \\
+    python creator_intelligence.py \\
+        --title "Egyptian creators" \\
+        --hashtags "egyptgirls,cairocreators" \\
+        --countries "EG" \\
+        --niche egypt_creators \\
         --posts-per-profile 10 \\
         --max-profiles 25
 """
@@ -87,39 +88,16 @@ MIN_VIEWS         = 300
 MAX_FOLLOWERS     = 300_000  # above this it is a brand or a managed influencer
 APPEARANCE_SAMPLE = 5
 
-# Chinese students specifically. Nothing generic — #studyabroad is deliberately
-# absent because the probe showed it returns anyone studying anywhere, which is
-# not who we are looking for. The Chinese-script tags carry most of the signal:
-# 留学生 is "overseas student" as written by Chinese speakers.
-GLOBAL_TAGS = ["chinesestudent", "chinesestudents", "中国留学生", "留学生"]
+# No hardcoded hashtag lists — hashtags are always passed from the UI via
+# --hashtags. If none are given the run errors out early rather than silently
+# searching for a niche the operator never asked for.
+DEFAULT_COUNTRIES = ["GB", "US", "CA", "AU", "NZ", "IE", "DE", "NL"]
 
-COUNTRY_TAGS = {
-    "GB": ["chinesestudentsuk", "英国留学生", "英国留学"],
-    "US": ["chinesestudentsusa", "美国留学生", "美国留学"],
-    "CA": ["chinesestudentscanada", "加拿大留学生", "加拿大留学"],
-    "AU": ["chinesestudentsaustralia", "澳洲留学生", "澳洲留学"],
-    "NZ": ["新西兰留学生", "新西兰留学"],
-    "IE": ["爱尔兰留学生", "爱尔兰留学"],
-    "DE": ["德国留学生", "德国留学"],
-    "NL": ["荷兰留学生", "荷兰留学"],
-}
-DEFAULT_COUNTRIES = list(COUNTRY_TAGS)
-
-# A bio containing any of these says "Chinese overseas student" in their own
-# words. 念书/读书/在读 are here because the probe surfaced a real student —
-# "我叫菲菲在美国🇺🇸念书" — that a 留学-only list threw away.
-STRONG = ["留学生", "留学", "中国留学生", "陪读", "海归",
-          "念书", "读书", "在读", "求学", "上学"]
-# Otherwise we need a study signal AND a Chinese signal together.
-STUDY = ["student", "uni ", "university", "college", "master", "msc", "phd",
-         "postgrad", "undergrad", "grad school", "campus", "大学", "研究生", "学生"]
-CHINESE = ["chinese", "china", "中国", "🇨🇳", "华人", "chinesegirl", "chineseboy",
-           "mandarin", "cn🇨🇳", "香港", "hongkong"]
-# Brand, agency and management accounts — not students, whatever they tag.
+# Brand, agency and management accounts — not real creators, whatever they tag.
 NOT_A_PERSON = ["brand:", "brand :", "management", "talent", "casting", "agency",
                 "booking", "pr:", "collab", "business inquir", "for business",
                 "sponsor", "mcn", "media group", "official account", "fans account",
-                "粉丝账号", "商务", "scholarships matched", "study abroad made"]
+                "scholarships matched", "study abroad made"]
 
 
 
@@ -159,18 +137,13 @@ def parse_args():
         description="Discover profiles from hashtags per country, save as reference accounts.")
     p.add_argument("--title", default="", help="Run name, shown in the request row and manifest")
     p.add_argument("--hashtags", default="",
-                   help="Comma-separated. Blank uses the built-in Chinese-student tags, "
-                        "which are country-specific.")
+                   help="Comma-separated hashtags to search. REQUIRED — no built-in "
+                        "fallback tags exist.")
     p.add_argument("--countries", default=",".join(DEFAULT_COUNTRIES),
                    help="Comma-separated ISO codes, e.g. GB,US,CA")
-    # Required, and deliberately not defaulted. A niche is what the run IS —
-    # everything it finds is filed under it, and a run that silently inherited
-    # "chinese_student" would file Russian creators under Chinese students.
-    # A hashtag is not a niche: #chinesestudentsuk is one of several ways to
-    # search for one, which is why tags hang off the niche rather than replace it.
     p.add_argument("--niche", required=True,
                    help="REQUIRED. Niche slug every profile and clip is filed under, "
-                        "e.g. chinese_student. Created if it doesn't exist yet.")
+                        "e.g. egypt_creators. Created if it doesn't exist yet.")
     p.add_argument("--posts-per-profile", type=int, default=POSTS_PER_PROFILE)
     p.add_argument("--max-profiles", type=int, default=MAX_PROFILES,
                    help="Cap on profiles kept per country")
@@ -199,13 +172,15 @@ def parse_args():
 
 
 def tags_for(iso: str, override: str) -> list:
-    if override:
-        return [t.strip().lstrip("#").lower() for t in override.split(",") if t.strip()]
-    return GLOBAL_TAGS + COUNTRY_TAGS.get(iso.upper(), [])
+    if not override:
+        raise ValueError("--hashtags is required: no built-in fallback tags exist")
+    return [t.strip().lstrip("#").lower() for t in override.split(",") if t.strip()]
 
 
 def _signal(bio: str, followers: int, private: bool, max_followers: int):
-    """The niche test itself, on plain values so both platforms share one rule."""
+    """Generic creator filter — rejects brands/agencies and private/empty accounts,
+    accepts everyone else. Niche relevance comes from the hashtags searched, not
+    from bio keywords."""
     bio = (bio or "").lower()
     if private:
         return False, "private account"
@@ -213,13 +188,7 @@ def _signal(bio: str, followers: int, private: bool, max_followers: int):
         return False, f"{followers:,} followers — brand/influencer"
     if any(k in bio for k in NOT_A_PERSON):
         return False, "brand/agency bio"
-    if not bio.strip():
-        return False, "empty bio — nothing to verify"
-    if any(k in bio for k in STRONG):
-        return True, "bio says 留学生/留学/念书"
-    if any(k in bio for k in STUDY) and any(k in bio for k in CHINESE):
-        return True, "study + chinese signal"
-    return False, "no chinese-student signal in bio"
+    return True, "accepted"
 
 
 def matches_niche(author: dict, max_followers: int):
