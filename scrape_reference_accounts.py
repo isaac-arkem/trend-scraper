@@ -43,6 +43,22 @@ def log(m):
     print(f"[{time.strftime('%H:%M:%S')}] {m}", flush=True)
 
 
+STAGES = [
+    (1, "sources",  "Checking sources"),
+    (2, "posts",    "Collecting posts"),
+    (3, "media",    "Saving media"),
+    (4, "results",  "Building your results"),
+]
+STAGE_TOTAL = len(STAGES)
+
+
+def stage(key, detail=""):
+    for n, k, text in STAGES:
+        if k == key:
+            print(f"STAGE|{n}|{STAGE_TOTAL}|{k}|{detail or text}", flush=True)
+            return
+
+
 def aggregate_appearance(cover_urls):
     singles = {f: Counter() for f in SINGLE}
     fashion, content = Counter(), Counter()
@@ -191,6 +207,8 @@ def main():
 
     set_request_status(db, request_id, "running")
 
+    stage("sources")
+
     # anything pasted in gets created first, then scraped in the same run
     if add:
         added = register_accounts(db, add, region)
@@ -216,6 +234,8 @@ def main():
         handle, plat = a["handle"], a["platform"]
         log(f"── [{done+1}/{len(accts)}] @{handle} ({plat}) | topic={a.get('topic')} region={a.get('region')}")
 
+        if done == 0:
+            stage("posts", f"Collecting posts from {len(accts)} account(s)")
         log(f"   Fetching latest {per_account} posts from {plat}…")
         try:
             if plat == "tiktok":
@@ -236,6 +256,7 @@ def main():
             c["subject_type"] = "ref"      # pre-set so process_clips skips per-clip vision
 
         if clips:
+            stage("media", f"Saving media for @{handle}")
             log(f"   Processing {len(clips)} clips (downloading audio/video, saving to storage)…")
             saved = T.process_clips(clips, workers=8)
             log(f"   {saved} clips saved to storage ({len(clips) - saved} duplicates/skipped)")
@@ -265,6 +286,7 @@ def main():
         done += 1
         log(f"   ✓ Done — {done}/{len(accts)} accounts complete | elapsed {(time.time()-t0)/60:.1f}m")
 
+      stage("results")
       log(f"━━ COMPLETE — {done}/{len(accts)} reference accounts scraped in {(time.time()-t0)/60:.1f}m ━━")
       set_request_status(db, request_id, "success")
 
