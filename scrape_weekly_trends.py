@@ -110,6 +110,16 @@ TRENDING_INDUSTRIES = [
     "Parenting & Kids", "Media & Entertainment", "News & Information",
 ]
 
+# Both of these were referenced but no longer defined — the industry-sweep change
+# removed them and nothing caught it, so every trends run died on a NameError
+# before reaching the actor. Restored to their previous values.
+TRENDING_ACTOR = "khadinakbar/tiktok-trending-hashtags-scraper"
+
+# Countries the trending actor covers. Anything outside this list falls back to
+# its configured market tags rather than returning an empty board.
+TRENDING_COUNTRIES = {"AE", "KW", "TR", "ZA", "EG", "MA", "SA", "NG",
+                      "BR", "MX", "CO", "AR", "IN", "ID", "PH", "TH"}
+
 
 
 
