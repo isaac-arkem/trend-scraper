@@ -25,6 +25,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -281,8 +282,20 @@ def start_run(req: RunRequest):
     cmd = [python_bin, spec["script"]] + args
 
     fh = open(log_path, "w")
-    proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT,
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             cwd=os.path.dirname(os.path.abspath(__file__)))
+
+    def _tee(pipe, log_fh, tag):
+        for line in iter(pipe.readline, b""):
+            text = line.decode("utf-8", errors="replace")
+            log_fh.write(text)
+            log_fh.flush()
+            sys.stdout.write(f"[{tag}] {text}")
+            sys.stdout.flush()
+        pipe.close()
+
+    threading.Thread(target=_tee, args=(proc.stdout, fh, run_id),
+                     daemon=True).start()
     RUNS[run_id] = {
         "id": run_id, "pipeline": req.pipeline, "pid": proc.pid, "proc": proc,
         "log": log_path, "status": "running",
