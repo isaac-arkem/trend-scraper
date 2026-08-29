@@ -11,7 +11,8 @@ decided up front (it is what you went looking for), not inferred afterwards.
         -> filter to people who actually match the niche
         -> reference_accounts rows, niche preset
         -> profile record + picture archived
-        -> N posts per profile -> clips -> media in object storage
+        -> N posts per profile (TT videos; IG Reels + photo/carousel) -> clips
+           -> media in object storage (Wasabi by default)
         -> manifest + per-country JSON
 
 Everything lands where the reference pipeline already puts it, so the dashboard,
@@ -647,10 +648,30 @@ def main():
                     h, plat = acct["handle"], acct.get("platform") or "tiktok"
                     log.info(f"  [{n}/{len(accts)}] @{h} ({plat})")
                     try:
-                        fetch = (T.scrape_ig_watchlist if plat == "instagram"
-                                 else T.scrape_tiktok_watchlist)
-                        clips = fetch([h], per_handle=a.posts_per_profile,
-                                      recency_days=a.recency_days)
+                        if plat == "instagram":
+                            # Reels (video+sound) + photo/carousel posts — same
+                            # split as scrape_reference_accounts. TikTok stays
+                            # video-only.
+                            clips = T.scrape_ig_watchlist(
+                                [h], per_handle=a.posts_per_profile,
+                                recency_days=a.recency_days)
+                            try:
+                                images = T.scrape_ig_images(
+                                    [h], per_handle=a.posts_per_profile,
+                                    recency_days=a.recency_days)
+                            except Exception as e:
+                                log.warning(f"     IG images failed: {str(e)[:80]}")
+                                images = []
+                            seen = {c.get("platform_post_id") for c in clips}
+                            extra = [im for im in images
+                                     if im.get("platform_post_id") not in seen]
+                            if extra:
+                                log.info(f"     + {len(extra)} photo/carousel posts")
+                            clips = clips + extra
+                        else:
+                            clips = T.scrape_tiktok_watchlist(
+                                [h], per_handle=a.posts_per_profile,
+                                recency_days=a.recency_days)
                     except Exception as e:
                         log.warning(f"     fetch failed: {str(e)[:80]}")
                         continue
@@ -663,19 +684,23 @@ def main():
 
                     saved = T.process_clips(clips, workers=8) if clips else 0
                     country_clips += saved
-                    log.info(f"     {len(clips)} clips -> {saved} saved")
+                    n_img = sum(1 for c in clips
+                                if c.get("_image_dl") and not c.get("_video_dl"))
+                    log.info(f"     {len(clips)} clips -> {saved} saved"
+                             + (f" ({n_img} images)" if n_img else ""))
 
-                    # Cover URLs are held for the media + vision phases, which run
-                    # once the whole scrape is finished. They are kept here because
-                    # this is the only point they exist: the actor returns them,
-                    # they are not persisted, and they expire from the platform CDN
-                    # within days. Nothing is analysed yet.
+                    # Cover / photo URLs are held for the media + vision phases,
+                    # which run once the whole scrape is finished. They are kept
+                    # here because this is the only point they exist: the actor
+                    # returns them, they are not always persisted yet, and they
+                    # expire from the platform CDN within days.
                     for c in clips:
-                        if c.get("_cover_url") and c.get("platform_post_id"):
+                        cover = c.get("_image_dl") or c.get("_cover_url")
+                        if cover and c.get("platform_post_id"):
                             pending_media.append({
                                 "post_id": c["platform_post_id"],
                                 "platform": c["platform"],
-                                "cover": c["_cover_url"],
+                                "cover": cover,
                                 "handle": h,
                                 "country": iso,
                             })
@@ -708,9 +733,9 @@ def main():
         tag_niche(niche_id, [m["post_id"] for m in pending_media], all_handles)
 
         # ── phase 2 · media ────────────────────────────────────────────────
-        # Videos are already in object storage (process_clips does that as each
-        # clip is saved). Cover images were not stored at all, so an image post
-        # left nothing behind and the appearance pass had nothing local to read.
+        # Videos (and IG photo posts) are already in object storage via
+        # process_clips. This pass mirrors any remaining cover/photo URLs so
+        # appearance has a local jpg even if the earlier upload missed one.
         stage("media", f"Downloading {len(pending_media)} images")
         summary["media"] = save_cover_images(pending_media)
 

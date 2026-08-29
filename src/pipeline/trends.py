@@ -284,6 +284,19 @@ def _save_clip(clip: dict, sound_id: Optional[str]) -> Optional[dict]:
         else:
             video_path = vpath
 
+    # Photo / carousel posts (and reel covers when provided) land next to videos
+    # in the configured object store (Wasabi by default). Column name is legacy.
+    image_path = None
+    image_url = clip.get("_image_dl") or (None if video_path else clip.get("_cover_url"))
+    if image_url and clip.get("platform_post_id"):
+        ipath = f"{clip['platform']}/cover/{clip['platform_post_id']}.jpg"
+        if not _exists(ipath):
+            img = _download(image_url)
+            if img:
+                image_path = _put(ipath, img, "image/jpeg")
+        else:
+            image_path = ipath
+
     row = {k: clip[k] for k in (
         "platform", "platform_post_id", "video_url", "creator_handle", "caption",
         "hashtags", "views", "likes", "comments", "shares", "saves", "duration_sec",
@@ -303,6 +316,8 @@ def _save_clip(clip: dict, sound_id: Optional[str]) -> Optional[dict]:
         row["niche_source"] = clip.get("niche_source")
     if video_path:
         row["video_minio_path"] = video_path
+    if image_path:
+        row["image_minio_path"] = image_path
     if clip.get("subject_type"):
         row["subject_type"] = clip["subject_type"]
         row["vision_checked"] = True
@@ -539,6 +554,64 @@ def scrape_ig_watchlist(handles: list[str], per_handle: int = 10,
             continue
         out.append(normalize_ig(i, "watchlist", i.get("ownerUsername", "")))
     log.info(f"[trends] IG watchlist: {len(out)} recent reels")
+    return out
+
+
+def normalize_ig_image_post(p: dict, feed: str = "watchlist") -> dict:
+    """Turn an apify/instagram-scraper image or carousel into a clip-shaped row.
+
+    No video / sound — media is the display image (first carousel slide). Saved
+    under image_minio_path by _save_clip.
+    """
+    posted = p.get("posted_at")
+    views = p.get("views") or 0
+    images = [u for u in (p.get("all_images") or []) if u]
+    cover = (images[0] if images else None) or p.get("thumbnail_url") or p.get("media_url")
+    return {
+        "platform": "instagram",
+        "platform_post_id": p.get("platform_post_id") or "",
+        "video_url": p.get("post_url"),
+        "creator_handle": (p.get("username") or "").lower(),
+        "caption": p.get("caption") or "",
+        "hashtags": p.get("hashtags") or [],
+        "views": views,
+        "likes": max(0, p.get("likes") or 0),
+        "comments": p.get("comments_count") or 0,
+        "shares": 0,
+        "saves": 0,
+        "duration_sec": None,
+        "posted_at": posted,
+        "velocity": round(views / _hours_since(posted), 2) if views else 0,
+        "feed_source": feed,
+        "seed_term": p.get("username") or "",
+        "_cover_url": cover,
+        "_image_dl": cover,
+        "_video_dl": None,
+        "_sound": None,
+    }
+
+
+def scrape_ig_images(handles: list[str], per_handle: int = 10,
+                     recency_days: int = DEFAULT_RECENCY_DAYS) -> list[dict]:
+    """Latest photo / carousel posts from IG profiles (not Reels).
+
+    Uses the profile posts actor so static images are included. Video/Reel items
+    are dropped here — scrape_ig_watchlist already covers those with sound.
+    """
+    if not handles:
+        return []
+    from src.apify.instagram import scrape_posts
+    raw = scrape_posts(handles, posts_per_user=per_handle)
+    out = []
+    for p in raw:
+        if p.get("media_type") not in ("image", "carousel"):
+            continue
+        if not (p.get("thumbnail_url") or p.get("media_url") or p.get("all_images")):
+            continue
+        if _hours_since(p.get("posted_at")) > recency_days * 24:
+            continue
+        out.append(normalize_ig_image_post(p, "watchlist"))
+    log.info(f"[trends] IG images: {len(out)} photo/carousel posts")
     return out
 
 

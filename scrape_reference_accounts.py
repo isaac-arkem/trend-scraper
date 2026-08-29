@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """
 Scrape the curated reference influencers (reference_accounts table):
-  • content  → their recent videos/reels with sounds + engagement + captions(voice),
-               stored in `clips` tagged with topic + region, feed_source=null
-               (so they DON'T mix into the Dance Trends lane)
+  • profile  → avatar + name + followers via the platform profile scraper;
+               CDN url on reference_accounts.profile_pic_url, mirrored to
+               profiles/<platform>/<user_id>.jpg (same path as creator intel)
+  • content  → their recent videos/reels (TikTok + IG) and IG photo/carousel posts,
+               with sounds + engagement where available, stored in `clips` tagged
+               with topic + region, feed_source=null (so they DON'T mix into the
+               Dance Trends lane). Media goes to the configured object store
+               (Wasabi by default).
   • appearance → gpt-4o vision on cover frames → aggregated look per account
                  (skin/hair/body/makeup + %female), saved to reference_accounts.appearance
 
@@ -26,6 +31,9 @@ for _n in ("httpx", "httpcore", "urllib3", "apify_client", "openai"):
 from src.db.client import get_db, upsert
 from src.pipeline import trends as T
 from src.ai.vision import analyze_image_bytes, QuotaExceededError
+from src.storage.minio import upload_from_url, profile_pic_path
+from src.apify.tiktok import scrape_profiles as tt_profiles
+from src.apify.instagram import scrape_profiles as ig_profiles
 
 PER_ACCOUNT = 25        # recent posts per account. 15 was below a stable median,
                         # which limited every lift number computed downstream.
@@ -57,6 +65,60 @@ def stage(key, detail=""):
         if k == key:
             print(f"STAGE|{n}|{STAGE_TOTAL}|{k}|{detail or text}", flush=True)
             return
+
+
+def fetch_profile(platform: str, handle: str) -> dict:
+    """Pull name / followers / avatar for one reference account.
+
+    The watchlist post scrapers return video metadata only — they do not write
+    profile fields onto reference_accounts — so this is a dedicated profile
+    actor call (same helpers creator intelligence uses).
+    """
+    handle = (handle or "").lower().lstrip("@")
+    if not handle:
+        return {}
+    try:
+        got = (tt_profiles if platform == "tiktok" else ig_profiles)([handle])
+    except Exception as e:
+        log(f"   ! profile fetch failed: {str(e)[:80]}")
+        return {}
+    for p in got or []:
+        uname = (p.get("username") or "").lower().lstrip("@")
+        if uname == handle:
+            return p
+    return (got or [{}])[0] if got else {}
+
+
+def profile_update(platform: str, handle: str, profile: dict) -> dict:
+    """Map a normalised profile into reference_accounts columns + mirror avatar."""
+    if not profile:
+        return {}
+    pic_url = profile.get("profile_pic_url") or profile.get("profile_pic")
+    uid = profile.get("platform_user_id") or None
+    update = {}
+    if pic_url:
+        update["profile_pic_url"] = pic_url
+    if uid:
+        update["platform_user_id"] = str(uid)
+    if profile.get("full_name"):
+        update["full_name"] = profile["full_name"]
+    if profile.get("followers") is not None:
+        update["followers"] = profile["followers"]
+
+    # Mirror to the dashboard's deterministic path so the CDN expiry on
+    # profile_pic_url does not blank the avatar later.
+    if pic_url:
+        key = str(uid or handle).lower().lstrip("@")
+        path = profile_pic_path(platform, key)
+        try:
+            stored = upload_from_url(pic_url, path)
+            if stored:
+                log(f"   Avatar mirrored → {stored}")
+            else:
+                log(f"   ! avatar upload failed (CDN url still saved)")
+        except Exception as e:
+            log(f"   ! avatar upload error: {str(e)[:70]}")
+    return update
 
 
 def aggregate_appearance(cover_urls):
@@ -234,18 +296,56 @@ def main():
         handle, plat = a["handle"], a["platform"]
         log(f"── [{done+1}/{len(accts)}] @{handle} ({plat}) | topic={a.get('topic')} region={a.get('region')}")
 
+        stage("sources", f"Fetching profile for @{handle}")
+        log(f"   Fetching profile (avatar / name / followers)…")
+        prof = fetch_profile(plat, handle)
+        prof_fields = profile_update(plat, handle, prof)
+        if prof_fields:
+            bits = []
+            if prof_fields.get("full_name"):
+                bits.append(prof_fields["full_name"])
+            if prof_fields.get("followers") is not None:
+                bits.append(f"{prof_fields['followers']:,} followers")
+            if prof_fields.get("profile_pic_url"):
+                bits.append("avatar ok")
+            log(f"   Profile: {' · '.join(bits) or 'saved'}")
+        else:
+            log(f"   ! no profile data returned — continuing with posts")
+
         stage("posts", f"Collecting posts from @{handle}")
         log(f"   Fetching latest {per_account} posts from {plat}…")
         try:
             if plat == "tiktok":
-                clips = T.scrape_tiktok_watchlist([handle], per_handle=per_account, recency_days=recency_days)
+                clips = T.scrape_tiktok_watchlist([handle], per_handle=per_account,
+                                                   recency_days=recency_days)
             else:
-                clips = T.scrape_ig_watchlist([handle], per_handle=per_account, recency_days=recency_days)
+                # Reels (video+sound) + photo/carousel posts. Two actors: the
+                # reel scraper has audio metadata; the posts scraper includes
+                # static images the reel actor never returns.
+                clips = T.scrape_ig_watchlist([handle], per_handle=per_account,
+                                               recency_days=recency_days)
+                try:
+                    images = T.scrape_ig_images([handle], per_handle=per_account,
+                                                recency_days=recency_days)
+                except Exception as e:
+                    log(f"   ! IG image scrape failed: {str(e)[:80]} — reels only")
+                    images = []
+                seen = {c.get("platform_post_id") for c in clips}
+                extra = [im for im in images if im.get("platform_post_id") not in seen]
+                if extra:
+                    log(f"   + {len(extra)} photo/carousel posts")
+                clips = clips + extra
         except Exception as e:
             log(f"   ✗ Fetch failed: {str(e)[:80]} — skipping account")
+            # Still persist whatever profile fields we got so a failed post
+            # scrape does not leave the avatar empty on a re-run.
+            if prof_fields:
+                db.table("reference_accounts").update(prof_fields).eq("id", a["id"]).execute()
             continue
 
-        log(f"   {len(clips)} clips retrieved")
+        n_img = sum(1 for c in clips if c.get("_image_dl") and not c.get("_video_dl"))
+        log(f"   {len(clips)} clips retrieved"
+            + (f" ({n_img} images)" if n_img else ""))
 
         # tag as reference content: topic+region, no feed_source, skip the women-filter
         for c in clips:
@@ -256,7 +356,7 @@ def main():
 
         if clips:
             stage("media", f"Saving media from @{handle}")
-            log(f"   Processing {len(clips)} clips (downloading audio/video, saving to storage)…")
+            log(f"   Processing {len(clips)} clips (downloading media, saving to storage)…")
             saved = T.process_clips(clips, workers=8)
             log(f"   {saved} clips saved to storage ({len(clips) - saved} duplicates/skipped)")
         else:
@@ -278,7 +378,7 @@ def main():
                 log("   ⚠ OpenAI quota exceeded — skipping appearance analysis for remaining accounts")
                 appearance_on = False
 
-        update = {"scraped_at": datetime.now(timezone.utc).isoformat()}
+        update = {"scraped_at": datetime.now(timezone.utc).isoformat(), **prof_fields}
         if appearance is not None:
             update["appearance"] = appearance
         db.table("reference_accounts").update(update).eq("id", a["id"]).execute()
